@@ -1,78 +1,91 @@
 # 🛠️ Meshropractor
 
-**Meshropractor** — это профессиональный инструмент для инженеров-конструкторов и технологов, предназначенный для пре-деформации 3D-моделей и компенсации производственных погрешностей. 
+[[русский язык](README_RU.md)]
 
-Программа позволяет загрузить CAD-модель, наложить на нее оптический скан получившейся детали и рассчитать инвертированную матрицу RBF-деформации. Это позволяет внести предыскажения в исходную геометрию, чтобы компенсировать усадки, коробления и наплывы металла при последующем производстве.
+**Meshropractor** — This is a professional tool for design engineers and technologists, designed for pre-deformation of 3D models and compensation of production errors.
+
+The program allows you to upload a CAD model, overlay an optical scan of the resulting part, and calculate the inverted RBF deformation matrix. This allows you to introduce distortions into the original geometry to compensate for shrinkage, warpage, and metal bulges during subsequent manufacturing.
 
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-green?style=flat-square&logo=qt)
 ![Open3D](https://img.shields.io/badge/Engine-Open3D%20C%2B%2B-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)
 
-## 💡 Основные сценарии использования
-* **Металлическая 3D-печать (SLM/DMLS):** Компенсация температурных поводок и внутренних напряжений при печати сложных геометрий и жаропрочных сплавов.
-* **Литье и фрезеровка:** Учет усадки материала и корректировка пресс-форм.
-* **Контроль качества (ОТК):** Визуальное сравнение (Heatmap) реальной детали с исходным чертежом.
+## Main use cases
 
-## 🚀 Ключевой функционал
+* **Metal 3D printing (SLM/DMLS):** Compensation for temperature fluctuations and internal stresses when printing complex geometries and heat-resistant alloys.
+* **Casting and milling:** Taking into account material shrinkage and adjusting molds.
+* **Quality control (QC):** Visual comparison (Heatmap) of a real part with the original drawing.
 
-### Шаг 1: Интеллектуальное совмещение (Alignment)
-* **Алгоритм ICP (Iterative Closest Point):** Сверхточное наложение скана на CAD-модель (до 2000 итераций).
-* **Автопилот:** Автоматическое первичное сведение моделей по центрам масс.
-* **Ручная разметка:** Возможность установки локальных маркеров-маячков прямо на 3D-сцене для грубого позиционирования сложных деталей.
+## 🚀 Key functionality
 
-### Шаг 2: Расчет пре-деформации (RBF Compensation)
-* **Аппаратный Raycasting:** Использование тензорного движка Intel/Open3D для мгновенной лазерной трассировки лучей и поиска отклонений.
-* **Smart Remeshing:** Автоматическое дробление крупных полигонов CAD-сетки для обеспечения плавной деформации.
-* **Математика RBF:** Использование радиально-базисных функций (Radial Basis Function) на базе `SciPy` для расчета матрицы контр-искажений. Поддержка как локального, так и ресурсоемкого глобального сглаживания.
+### Step 1: Intelligent Combination (Alignment)
 
-### Анализ и Визуализация
-* **Heatmap (Цветовая карта отклонений):** Расчет знаковой дистанции (Signed Distance) и построение градиентной тепловой карты отклонений в реальном времени.
-* **Современный GUI:** Темная тема, интерактивное 3D-окно на базе `PyVista/VTK`, гибкое управление слоями и прозрачностью.
+* **Algorithm ICP (Iterative Closest Point):** Highly accurate scan overlay on the CAD model (up to 2000 iterations).
+* **Autopilot:** Automatic primary alignment of models by centers of mass.
+* **Manual marking:** The ability to install local markers directly on the 3D scene for rough positioning of complex parts.
+
+### Step 2: Pre-deformation calculation (RBF Compensation)
+
+* **Algorithm Raycasting:** Using the Intel/Open3D Tensor Engine for instant laser ray tracing and anomaly detection.
+* **Smart Remeshing:** Automatic fragmentation of large CAD mesh polygons to ensure smooth deformation.
+* **Mathematic RBF:** Using `SciPy` -based radial basis functions to calculate the counter-distortion matrix. Support for both local and resource-intensive global anti-aliasing.
+
+### Analysis and Visualization
+
+* **Heatmap (Color deviation map):** Calculation of the (Signed Distance) and construction of a gradient heat map of deviations in real time.
+* **Modern GUI:** Dark theme, interactive 3D window based on `PyVista/VTK`, flexible layer and transparency control.
 
 ---
 
-## ⚙️ Установка и запуск
+## ⚙️ Installation and launch
 
-Для работы программы потребуется Python версии 3.10 или выше.
+The program requires Python version 3.10 or higher to run.
 
-1. **Клонируйте репозиторий:**
+1. **Clone the repository:**
+
    ```bash
-   git clone [https://github.com/ВАШ_НИК/Meshropractor.git](https://github.com/ВАШ_НИК/Meshropractor.git)
+   git clone [https://github.com/NIKNAME/Meshropractor.git](https://github.com/NIKNAME/Meshropractor.git)
    cd Meshropractor
    ```
 
-2. **Создайте и активируйте виртуальное окружение:**
+2. **Create and activate a virtual environment:**
+
    ```bash
-   # Для Windows
+   # For Windows
    python -m venv .venv
    .\.venv\Scripts\activate
    
-   # Для Linux/Mac
+   # For Linux/Mac
    python3 -m venv .venv
    source .venv/bin/activate
    ```
 
-3. **Установите зависимости:**
+3. **Install dependencies:**
+
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Запустите программу:**
+4. **Run the program:**
+
    ```bash
    python App.py
    ```
 
-*(Примечание: Также возможна сборка проекта в standalone `.exe` файл с помощью PyInstaller или auto-py-to-exe).*
+*(Note: It is also possible to build a project into a standalone `.exe` file using PyInstaller or auto-py-to-exe).*
 
 ---
 
-## 👨‍💻 Лицензия и Юридическая информация
-Программа использует официальный порт **PySide6** (LGPL лицензия), что делает возможным использование данного софта в закрытых коммерческих процессах без необходимости покупать коммерческие ключи. Математическое ядро построено на открытых библиотеках (MIT / BSD).
+## 👨‍💻 License and Legal Information
 
-## 💰 Поддержка автора
-Тяжело быть инженером-конструктором в наше время... Бессонные ночи перед дедлайнами, литры выпитого энергетика, вечная борьба с допусками и попытки натянуть кривой оптический скан на идеальную CAD-модель.
+The program uses the official **PySide6** port (LGPL license), making it possible to use this software in closed commercial processes without the need to purchase commercial keys. The mathematical core is built on open-source libraries (MIT/BSD).
 
-Если эта программа сэкономила вам пару часов сна, нервные клетки или уберегла целую партию деталей от брака на производстве — буду рад вашей поддержке! Любая копеечка пойдет на развитие полезного софта.
-* **Реквизиты карты:** 2200 1509 5905 0136
+## 💰 Support the author
 
-📬 Предложения по улучшению и баг-репорты: <theboogie888@gmail.com>
+It's tough being a design engineer these days... Sleepless nights before deadlines, liters of energy drinks, the constant struggle with tolerances, and attempts to fit a crooked optical scan onto a perfect CAD model.
+
+If this program has saved you a couple of hours of sleep, a lot of nerves, or prevented an entire batch of parts from being defective at the factory, I'd be grateful for your support! Every penny will go toward the development of useful software.
+
+* **Bank card details:** 2200 1509 5905 0136
+
+📬 Suggestions for improvement and bug reports: <theboogie888@gmail.com>
