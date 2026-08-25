@@ -82,9 +82,8 @@ class MainWindow(QMainWindow):
         self.ui.btn_save.clicked.connect(self.save_result)
 
         # --- Вкладка Слайсера ---
-        self.ui.btn_load_slicer_part.clicked.connect(self.load_slicer_part)
-        self.ui.btn_load_slicer_supp.clicked.connect(self.load_slicer_supp)
-        self.ui.btn_run_slice.clicked.connect(self.start_slicing)
+        # Подключаем единственную кнопку "Экспорт .CLS" к открытию модального окна
+        self.ui.ribbon_btns["Создание срезов Concept Laser"].clicked.connect(self.open_export_dialog)
 
         # Панель слоев
         self.ui.chk_view_cad.stateChanged.connect(self.update_visibility)
@@ -188,6 +187,17 @@ class MainWindow(QMainWindow):
     def leaveEvent(self, event):
         self.setCursor(Qt.ArrowCursor)
         super().leaveEvent(event)
+
+    def closeEvent(self, event):
+        """Корректно закрываем обе 3D-сцены перед выходом"""
+        try:
+            if hasattr(self, 'ui') and hasattr(self.ui, 'plotter'):
+                self.ui.plotter.close()
+            if hasattr(self, 'slicer_plotter'):
+                self.slicer_plotter.close()
+        except Exception:
+            pass
+        event.accept()
 
     # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ЛОГИКИ ===
     def log(self, text, replace=False):
@@ -453,60 +463,14 @@ class MainWindow(QMainWindow):
     # ==========================================
     # ЛОГИКА СЛАЙСЕРА
     # ==========================================
-    def load_slicer_part(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Выберите деталь для нарезки", "", "STL Files (*.stl)")
-        if path:
-            self.ui.lbl_slicer_part.setText(f"Деталь: {path.split('/')[-1]}")
-            self.slicer_part_path = path
+    def open_export_dialog(self):
+        """Открывает окно параметров Concept Laser"""
+        from UI_Meshropractor import DialogExportCLS
+        dialog = DialogExportCLS(self)
 
-    def load_slicer_supp(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Выберите поддержки (необязательно)", "", "STL Files (*.stl)")
-        if path:
-            self.ui.lbl_slicer_supp.setText(f"Поддержки: {path.split('/')[-1]}")
-            self.slicer_supp_path = path
-
-    def start_slicing(self):
-        if not hasattr(self, 'slicer_part_path') or not self.slicer_part_path:
-            self.log("[!] ОШИБКА СЛАЙСЕРА: Деталь не выбрана!")
-            return
-
-        out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить файл Concept Laser", "sliced_job.cls",
-                                                  "CLS Files (*.cls)")
-        if not out_path: return
-
-        try:
-            layer_height = float(self.ui.input_layer_th.text())
-        except ValueError:
-            self.log("[!] ОШИБКА СЛАЙСЕРА: Неверный формат толщины слоя!")
-            return
-
-        supp_path = getattr(self, 'slicer_supp_path', None)
-
-        self.log(f"\n=== ЗАПУСК СЛАЙСЕРА ===")
-        self.log(f"Деталь: {self.slicer_part_path}")
-        self.log(f"Толщина слоя: {layer_height} мм")
-
-        self.ui.btn_run_slice.setEnabled(False)
-        self.ui.btn_run_slice.setText("⏳ Идет нарезка слоев...")
-        self.ui.slicer_progress.setValue(0)
-
-        from Workers_Meshropractor import SlicerWorker
-        self.slicer_worker = SlicerWorker(self.slicer_part_path, supp_path, out_path, layer_height)
-
-        self.slicer_worker.progress.connect(self.ui.slicer_progress.setValue)
-        self.slicer_worker.finished.connect(self.on_slicer_finished)
-        self.slicer_worker.error.connect(self.on_slicer_error)
-        self.slicer_worker.start()
-
-    def on_slicer_finished(self, msg):
-        self.log(f"✅ {msg}")
-        self.ui.btn_run_slice.setEnabled(True)
-        self.ui.btn_run_slice.setText("🚀 Сгенерировать .CLS")
-
-    def on_slicer_error(self, msg):
-        self.log(msg)
-        self.ui.btn_run_slice.setEnabled(True)
-        self.ui.btn_run_slice.setText("🚀 Сгенерировать .CLS")
+        # Если пользователь нажал "Да"
+        if dialog.exec():
+            self.log("\n>>> Окно экспорта подтверждено. Скоро здесь будет запуск нарезки .CLS с новыми параметрами!")
 
     # ==========================================
     # ПАМЯТЬ, ОЧИСТКА И НЕДАВНИЕ ПРОЕКТЫ

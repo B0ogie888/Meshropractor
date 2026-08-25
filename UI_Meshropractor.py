@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QSlider, QCheckBox, QGroupBox, QTextEdit,
                                QScrollArea, QTabWidget, QGridLayout, QSplitter,
                                QTreeWidget, QTreeWidgetItem, QToolBar, QStyle, QMainWindow,
-                               QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog)
+                               QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog,
+                               QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox)
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
@@ -20,6 +21,7 @@ class Ui_MainWindow(object):
             "Scan": "#d3d3d3",
             "Result": "#2ca02c"
         }
+        self.ribbon_btns = {}  # Словарь для кнопок ленты слайсера
 
         # === БАЗОВЫЕ НАСТРОЙКИ ОКНА ===
         main_window.setWindowTitle("DeWarp Enterprise V6.1")
@@ -255,64 +257,339 @@ class Ui_MainWindow(object):
         layout.addWidget(label)
         return page
 
-    def init_slicer_page(self):
-        """Интерфейс зоны Слайсера (подготовка к Concept Laser)"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setAlignment(Qt.AlignTop)
+    def create_magics_left_panel(self):
+        """Создает левую мега-панель слайсера (Отображение, Детали, Заметки, Измерения)"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: #2b2b2b; }")
 
-        title = QLabel("Подготовка задания для Concept Laser M2 (.cls)")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: white; margin: 15px;")
-        layout.addWidget(title)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
 
-        # Файлы
-        file_group = QGroupBox("1. Геометрия")
-        file_group.setStyleSheet("QGroupBox { color: white; border: 1px solid #555; padding-top: 15px; }")
-        fl = QVBoxLayout()
+        # Единый темный стиль для всех блоков (имитация сворачиваемых панелей Magics)
+        dark_style = """
+            QGroupBox { border: 1px solid #444; margin-top: 20px; font-weight: bold; color: #E0E0E0; background-color: #2b2b2b; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; top: -10px; }
+            QTabWidget::pane { border: 1px solid #444; background-color: #333; }
+            QTabBar::tab { background-color: #222; color: #aaa; padding: 4px 10px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
+            QTabBar::tab:selected { background-color: #333; color: white; font-weight: bold; border-top: 2px solid #b31b1b; }
+            QTableWidget { background-color: #2a2a2a; color: white; border: 1px solid #444; gridline-color: #444; font-size: 11px; }
+            QHeaderView::section { background-color: #333; color: white; border: 1px solid #444; padding: 2px; font-size: 11px; }
+            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 4px 8px; border-radius: 2px; }
+            QPushButton:hover { background-color: #555; border: 1px solid #777; }
+        """
 
-        self.lbl_slicer_part = QLabel("Деталь: Не выбрана")
-        self.lbl_slicer_part.setStyleSheet("color: #ccc;")
-        self.btn_load_slicer_part = QPushButton("📂 Выбрать деталь (STL)")
+        # --- 1. Отображение ---
+        grp_disp = QGroupBox("▼ Отображение")
+        grp_disp.setStyleSheet(dark_style)
+        lo_disp = QVBoxLayout(grp_disp)
+        lo_disp.setContentsMargins(5, 15, 5, 5)
 
-        self.lbl_slicer_supp = QLabel("Поддержки: Не выбраны (Опционально)")
-        self.lbl_slicer_supp.setStyleSheet("color: #ccc;")
-        self.btn_load_slicer_supp = QPushButton("📂 Выбрать поддержки (STL)")
+        tabs_disp = QTabWidget()
+        tab_sec = QWidget()
+        lo_sec = QVBoxLayout(tab_sec)
 
-        fl.addWidget(self.lbl_slicer_part)
-        fl.addWidget(self.btn_load_slicer_part)
-        fl.addWidget(self.lbl_slicer_supp)
-        fl.addWidget(self.btn_load_slicer_supp)
-        file_group.setLayout(fl)
-        layout.addWidget(file_group)
+        # Таблица сечений
+        tbl_sec = QTableWidget(5, 6)
+        tbl_sec.setHorizontalHeaderLabels(["Активно", "Тип", "Отсечь", "Цвет", "Позиция", "Шаг"])
+        tbl_sec.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        tbl_sec.verticalHeader().setVisible(False)
+        tbl_sec.setFixedHeight(120)
+        lo_sec.addWidget(tbl_sec)
 
-        # Настройки
-        param_group = QGroupBox("2. Параметры нарезки (По аналогии с Magics)")
-        param_group.setStyleSheet("QGroupBox { color: white; border: 1px solid #555; padding-top: 15px; }")
-        pl = QGridLayout()
+        # Кнопки и ползунок под таблицей
+        h_sec = QHBoxLayout()
+        h_sec.addWidget(QPushButton("Указать"))
+        h_sec.addWidget(QPushButton("Выровнять"))
+        btn_exp = QPushButton("Экспорт ▾")
+        h_sec.addWidget(btn_exp)
+        sld_sec = QSlider(Qt.Horizontal)
+        h_sec.addWidget(sld_sec)
+        lo_sec.addLayout(h_sec)
 
-        pl.addWidget(QLabel("Толщина слоя (мм):", styleSheet="color: white;"), 0, 0)
-        self.input_layer_th = QLineEdit("0.03")
-        pl.addWidget(self.input_layer_th, 0, 1)
+        tabs_disp.addTab(tab_sec, "Сечения")
+        tabs_disp.addTab(QWidget(), "Срезы")
+        lo_disp.addWidget(tabs_disp)
+        layout.addWidget(grp_disp)
 
-        pl.addWidget(QLabel("Размер острова X/Y (мм):", styleSheet="color: white;"), 1, 0)
-        self.input_island = QLineEdit("5.0")
-        pl.addWidget(self.input_island, 1, 1)
+        # --- 2. Детали ---
+        grp_parts = QGroupBox("▼ Детали")
+        grp_parts.setStyleSheet(dark_style)
+        lo_parts = QVBoxLayout(grp_parts)
+        lo_parts.setContentsMargins(5, 15, 5, 5)
 
-        param_group.setLayout(pl)
-        layout.addWidget(param_group)
+        tabs_parts = QTabWidget()
+        tab_list = QWidget()
+        lo_list = QVBoxLayout(tab_list)
 
-        # Кнопка старта
-        self.btn_run_slice = QPushButton("🚀 Сгенерировать .CLS")
-        self.btn_run_slice.setStyleSheet(
-            "height: 40px; background-color: #b31b1b; color: white; font-weight: bold; font-size: 14px;")
-        layout.addWidget(self.btn_run_slice)
+        h_list_top = QHBoxLayout()
+        cb_plat = QComboBox()
+        cb_plat.addItem("M2_220x220_Magics")
+        cb_plat.setStyleSheet("background-color: #333; color: white;")
+        h_list_top.addWidget(cb_plat, stretch=1)
+        h_list_top.addWidget(QLabel("Кол-во деталей: 1"))
+        lo_list.addLayout(h_list_top)
 
-        self.slicer_progress = QProgressBar()
-        self.slicer_progress.setValue(0)
-        layout.addWidget(self.slicer_progress)
+        tbl_parts = QTableWidget(1, 8)
+        tbl_parts.setHorizontalHeaderLabels(
+            ["#", "Выбранные", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
+        tbl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        tbl_parts.verticalHeader().setVisible(False)
+        tbl_parts.setFixedHeight(100)
+        lo_list.addWidget(tbl_parts)
+
+        # Имитация мелких тулбарных иконок
+        lo_list.addWidget(QLabel("🔧 👁 📋 ❌ 🔄 (Инструменты работы с деталью)"))
+
+        tabs_parts.addTab(tab_list, "Список деталей")
+        tabs_parts.addTab(QWidget(), "Информация о детали")
+        tabs_parts.addTab(QWidget(), "Исправление деталей - инфо")
+        tabs_parts.addTab(QWidget(), "Оценка времени")
+        tabs_parts.addTab(QWidget(), "Сцены")
+        lo_parts.addWidget(tabs_parts)
+        layout.addWidget(grp_parts)
+
+        # --- 3. Заметки ---
+        grp_notes = QGroupBox("▼ Заметки")
+        grp_notes.setStyleSheet(dark_style)
+        lo_notes = QVBoxLayout(grp_notes)
+        lo_notes.setContentsMargins(5, 15, 5, 5)
+        tabs_notes = QTabWidget()
+        tabs_notes.addTab(QWidget(), "Текст")
+        tabs_notes.addTab(QWidget(), "Рисунки")
+        tabs_notes.addTab(QWidget(), "Приложения")
+        tabs_notes.addTab(QWidget(), "Текстуры")
+        lo_notes.addWidget(tabs_notes)
+        layout.addWidget(grp_notes)
+
+        # --- 4. Измерения ---
+        grp_meas = QGroupBox("▼ Измерения")
+        grp_meas.setStyleSheet(dark_style)
+        lo_meas = QVBoxLayout(grp_meas)
+        lo_meas.setContentsMargins(5, 15, 5, 5)
+        tabs_meas = QTabWidget()
+        tab_dist = QWidget()
+        lo_dist = QVBoxLayout(tab_dist)
+
+        lo_dist.addWidget(QLabel("📏 🟢 🟩 (Тулбар измерений)"))
+        info_meas = QGroupBox("Информация о измерениях")
+        info_meas.setFixedHeight(60)
+        lo_dist.addWidget(info_meas)
+        lo_dist.addWidget(QCheckBox("Скрыто"))
+
+        h_meas_btn = QHBoxLayout()
+        h_meas_btn.addWidget(QPushButton("Выбрать"))
+        h_meas_btn.addWidget(QPushButton("Очистить измерения"))
+        h_meas_btn.addWidget(QPushButton("Настройки привязки"))
+        lo_dist.addLayout(h_meas_btn)
+
+        tabs_meas.addTab(tab_dist, "Расстояние")
+        tabs_meas.addTab(QWidget(), "Окружность")
+        tabs_meas.addTab(QWidget(), "Угол")
+        tabs_meas.addTab(QWidget(), "Инфо")
+        tabs_meas.addTab(QWidget(), "Фактическая деталь")
+        tabs_meas.addTab(QWidget(), "Отчеты")
+        lo_meas.addWidget(tabs_meas)
+        layout.addWidget(grp_meas)
+
+        # --- 5. Исправления деталей ---
+        grp_fix = QGroupBox("▼ Исправления деталей")
+        grp_fix.setStyleSheet(dark_style)
+        lo_fix = QVBoxLayout(grp_fix)
+        lo_fix.setContentsMargins(5, 15, 5, 5)
+        tabs_fix = QTabWidget()
+        tabs_fix.addTab(QWidget(), "Автоисправление")
+        tabs_fix.addTab(QWidget(), "Базовые")
+        tabs_fix.addTab(QWidget(), "Отверстия")
+        tabs_fix.addTab(QWidget(), "Треугольники")
+        tabs_fix.addTab(QWidget(), "Фрагмент")
+        tabs_fix.addTab(QWidget(), "Нахлёсты")
+        tabs_fix.addTab(QWidget(), "Точки")
+        lo_fix.addWidget(tabs_fix)
+        layout.addWidget(grp_fix)
 
         layout.addStretch()
+        scroll.setWidget(content)
+        return scroll
+
+    def init_slicer_page(self):
+        """Интерфейс зоны Слайсера в стиле Magics (Использование \n для переноса строк на кнопках)"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # --- 1. ВЕРХНЯЯ ЛЕНТА ИНСТРУМЕНТОВ ---
+        self.magics_ribbon = QTabWidget()
+        self.magics_ribbon.setFixedHeight(95)
+        self.magics_ribbon.setStyleSheet("""
+            QTabWidget::pane { 
+                border-top: 1px solid #444444; 
+                background-color: #2b2b2b; 
+            }
+            QTabBar::tab { 
+                background-color: #222222; 
+                color: #aaaaaa; 
+                padding: 8px 15px; 
+                font-weight: bold; 
+                border: none;
+            }
+            QTabBar::tab:selected { 
+                background-color: #2b2b2b; 
+                color: #ffffff; 
+                border-bottom: 2px solid #b31b1b; 
+            }
+            QTabBar::tab:hover { 
+                color: #ffffff; 
+                background-color: #333333; 
+            }
+        """)
+
+        # Используем \n для аккуратного переноса длинных названий на вторую строку
+        self.magics_ribbon.addTab(
+            self.create_ribbon_tab(["Создать", "Дублировать", "Пакетное\nдублирование"], "Создание"), "ИНСТРУМЕНТЫ")
+        self.magics_ribbon.addTab(
+            self.create_ribbon_tab(["Автоисправление", "Бормашина", "Отверстия", "Триксел"], "Лечение сетки"),
+            "ИСПРАВЛЕНИЕ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Текстура 1", "Текстура 2"], "Текстурирование"), "ТЕКСТУРЫ")
+        self.magics_ribbon.addTab(
+            self.create_ribbon_tab(["Перемещать", "Вращать", "Масштабировать", "Озеркалить"], "Позиционирование"),
+            "РАСПОЛОЖЕНИЕ")
+        self.magics_ribbon.addTab(
+            self.create_ribbon_tab(["Платформа M2", "Платформа Mlab", "Параметры стола"], "Оборудование"), "ПЛАТФОРМЫ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Колонны", "Решетка", "Контурные\nподдержки"], "Генерация"),
+                                  "ПОДДЕРЖКИ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Heatmap", "Сравнение", "Мин/Макс\nтолщины"], "Контроль"),
+                                  "АНАЛИЗ И ОТЧЕТЫ")
+        self.magics_ribbon.addTab(
+            self.create_ribbon_tab(["Создание срезов\nConcept Laser"], "Concept Laser"), "СРЕЗЫ")
+        self.magics_ribbon.addTab(
+            self.create_ribbon_tab(["Цвет деталей", "Прозрачность", "Отображение\nсетки"], "Визуализация"),
+            "ОТОБРАЖЕНИЕ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Параметры", "Язык", "Горячие\nклавиши"], "Система"),
+                                  "НАСТРОЙКИ И ПОМОЩЬ")
+
+        layout.addWidget(self.magics_ribbon)
+
+        # --- 2. ЦЕНТРАЛЬНЫЙ БЛОК ---
+        slicer_splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(slicer_splitter)
+
+        # Левая панель: Мега-панель Magics
+        slicer_left_panel = self.create_magics_left_panel()
+
+        # Центральная зона: 3D Сцена + Вкладки сцен снизу
+        center_container = QWidget()
+        center_layout = QVBoxLayout(center_container)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+
+        self.slicer_plotter = QtInteractor(center_container)
+        self.slicer_plotter.setCursor(Qt.ArrowCursor)
+        self.slicer_plotter.set_background('white')
+        self.slicer_plotter.add_axes()
+        center_layout.addWidget(self.slicer_plotter.interactor)
+
+        # ТЕМНЫЕ вкладки переключения сценок снизу
+        self.scene_tabs = QTabWidget()
+        self.scene_tabs.setFixedHeight(32)
+        self.scene_tabs.setStyleSheet("""
+            QTabWidget::pane { border: none; background-color: #2b2b2b; }
+            QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 4px 15px; font-size: 11px; border: 1px solid #3d3d3d; }
+            QTabBar::tab:selected { background-color: #2b2b2b; color: #ffffff; font-weight: bold; border-bottom: 2px solid #b31b1b; }
+            QTabBar::tab:hover { background-color: #333333; color: #ffffff; }
+        """)
+        self.scene_tabs.addTab(QWidget(), "🖥 Модельная сцена (В воздухе)")
+        self.scene_tabs.addTab(QWidget(), "📦 M2_220x220 (Concept Laser)")
+        self.scene_tabs.addTab(QWidget(), "📦 mlab_90x90 (Concept Laser)")
+        self.scene_tabs.addTab(QWidget(), "📦 M2_245x245 (Concept Laser)")
+
+        self.scene_tabs.currentChanged.connect(self.on_scene_tab_changed)
+        center_layout.addWidget(self.scene_tabs)
+
+        # Правая панель: Шторка параметров
+        slicer_right_panel = QWidget()
+        slicer_right_layout = QVBoxLayout(slicer_right_panel)
+        slicer_right_layout.setContentsMargins(5, 5, 5, 5)
+
+        slicer_splitter.addWidget(slicer_left_panel)
+        slicer_splitter.addWidget(center_container)
+        slicer_splitter.addWidget(slicer_right_panel)
+        slicer_splitter.setSizes([450, 1150, 0])
+
+        self.slicer_tabs = QTabWidget()
+        self.slicer_tabs.setStyleSheet("""
+            QTabBar::tab { color: black; background-color: #cccccc; padding: 5px 10px; }
+            QTabBar::tab:selected { background-color: #ffffff; font-weight: bold; }
+            QTabWidget::pane { border: 1px solid #555; }
+            QWidget { color: #E0E0E0; } 
+        """)
+
+        tab_preview = QWidget()
+        tpr_layout = QVBoxLayout(tab_preview)
+        tpr_layout.addWidget(QLabel("Просмотр срезов .CLS", styleSheet="color: white; font-weight: bold;"))
+        tpr_layout.addStretch()
+        self.slicer_tabs.addTab(tab_preview, "Срезы")
+
+        slicer_right_layout.addWidget(self.slicer_tabs)
         return page
+
+    def create_ribbon_tab(self, button_names, category_name):
+        """Создает панель с поддержкой переноса текста через \n"""
+        container = QWidget()
+        container.setStyleSheet("background-color: #2b2b2b;")
+        h_layout = QHBoxLayout(container)
+        h_layout.setAlignment(Qt.AlignLeft)
+        h_layout.setContentsMargins(8, 5, 8, 5)
+        h_layout.setSpacing(8)
+
+        for name in button_names:
+            btn = QPushButton(name)
+            btn.setFixedSize(115, 60)
+            btn.setCursor(Qt.PointingHandCursor)
+
+            # Qt автоматически переносит строки по символу \n и центрирует текст на кнопке
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #e0e0e0;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #383838;
+                    border: 1px solid #666666;
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    background-color: #222222;
+                    border: 1px solid #b31b1b;
+                }
+            """)
+
+            clean_name = name.replace('\n', ' ')
+            self.ribbon_btns[clean_name] = btn
+
+            h_layout.addWidget(btn)
+
+        h_layout.addStretch()
+        return container
+
+    def on_scene_tab_changed(self, index):
+        """Логика смены сцены в зависимости от выбранной платформы"""
+        # Индексы: 0 - Модельная, 1 - M2_220x220, 2 - Mlab_90x90, 3 - M2_245x245
+        if index == 0:
+            print("Переключено на: Модельная сцена (без платформы)")
+        elif index == 1:
+            print("Переключено на платформу: M2 220x220 мм")
+        elif index == 2:
+            print("Переключено на платформу: Mlab 90x90 мм")
+        elif index == 3:
+            print("Переключено на платформу: M2 245x245 мм")
 
     def init_deformation_page(self):
         """Интерфейс зоны Предеформации (ваш оригинальный код)"""
@@ -627,3 +904,126 @@ class Ui_MainWindow(object):
         layout.addWidget(scroll)
 
         return page
+
+
+class DialogExportCLS(QDialog):
+    """Модальное окно параметров экспорта для Concept Laser"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Concept Laser")
+        self.setFixedSize(480, 800)
+
+        # Фирменный темный стиль
+        self.setStyleSheet("""
+            QDialog { background-color: #2b2b2b; color: #e0e0e0; }
+            QGroupBox { border: 1px solid #555; margin-top: 15px; padding-top: 15px; font-weight: bold; color: #ccc; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 3px; }
+            QLabel, QCheckBox, QRadioButton { color: #e0e0e0; }
+            QLineEdit, QComboBox, QSpinBox { background-color: #333; color: white; border: 1px solid #555; padding: 3px; }
+            QTableWidget { background-color: #333; color: white; border: 1px solid #555; gridline-color: #555; }
+            QHeaderView::section { background-color: #444; color: white; border: 1px solid #555; }
+            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 5px 15px; border-radius: 3px; }
+            QPushButton:hover { background-color: #555; border: 1px solid #777; }
+            QPushButton:pressed { background-color: #b31b1b; }
+        """)
+
+        main_layout = QVBoxLayout(self)
+
+        # 1. Файлы
+        grp_files = QGroupBox("Файлы")
+        lo_files = QVBoxLayout(grp_files)
+        table_layout = QHBoxLayout()
+        self.table = QTableWidget(1, 2)
+        self.table.setHorizontalHeaderLabels(["Модель", "Файлы срезов"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setFixedHeight(60)
+        self.table.setItem(0, 0, QTableWidgetItem("Деталь_1"))
+        self.table.setItem(0, 1, QTableWidgetItem("Job_1.cls"))
+        table_layout.addWidget(self.table)
+        btn_browse = QPushButton("...")
+        btn_browse.setFixedSize(30, 30)
+        table_layout.addWidget(btn_browse)
+        lo_files.addLayout(table_layout)
+        lo_files.addWidget(QLabel("Выбранный каталог"))
+        lo_files.addWidget(QLineEdit("C:\\Meshropractor\\Export"))
+        main_layout.addWidget(grp_files)
+
+        # 2. Пресеты
+        grp_preset = QGroupBox("Предустановленный набор параметров")
+        lo_preset = QVBoxLayout(grp_preset)
+        h_combo = QHBoxLayout()
+        h_combo.addWidget(QLabel("Предопредел."))
+        h_combo.addWidget(QComboBox())
+        lo_preset.addLayout(h_combo)
+        h_btns = QHBoxLayout()
+        for btn_text in ["Новый", "Обновить", "Удалить", "По умолчанию"]:
+            h_btns.addWidget(QPushButton(btn_text))
+        lo_preset.addLayout(h_btns)
+        main_layout.addWidget(grp_preset)
+
+        # 3. Срезы модели и поддержек
+        h_slices = QHBoxLayout()
+        grp_mod = QGroupBox("Срезы модели")
+        lo_mod = QGridLayout(grp_mod)
+        lo_mod.addWidget(QLabel("Толщина среза"), 0, 0)
+        lo_mod.addWidget(QLineEdit("0,025"), 0, 1)
+        lo_mod.addWidget(QLabel("Компенсация луча"), 1, 0)
+        lo_mod.addWidget(QLineEdit("0,000"), 1, 1)
+        h_slices.addWidget(grp_mod)
+
+        grp_sup = QGroupBox("Срезы поддержек")
+        lo_sup = QGridLayout(grp_sup)
+        lo_sup.addWidget(QLabel("Толщина среза"), 0, 0)
+        lo_sup.addWidget(QLineEdit("0,050"), 0, 1)
+        lo_sup.setAlignment(Qt.AlignTop)
+        h_slices.addWidget(grp_sup)
+        main_layout.addLayout(h_slices)
+
+        # 4. Оболочка-ядро
+        grp_core = QGroupBox("Оболочка-ядро")
+        lo_core = QVBoxLayout(grp_core)
+        h_rad = QHBoxLayout()
+        r1 = QRadioButton("Без ядра");
+        r1.setChecked(True)
+        h_rad.addWidget(r1)
+        h_rad.addWidget(QRadioButton("Без оболочки"))
+        h_rad.addWidget(QRadioButton("Оболочка"))
+        lo_core.addLayout(h_rad)
+        h_thick = QHBoxLayout()
+        h_thick.addWidget(QLabel("Толщина стенки"))
+        h_thick.addWidget(QLineEdit("0,000"))
+        h_thick.addStretch()
+        lo_core.addLayout(h_thick)
+        main_layout.addWidget(grp_core)
+
+        # 5. Островок (Шахматка)
+        grp_isl = QGroupBox("Островок")
+        lo_isl = QVBoxLayout(grp_isl)
+        lo_isl.addWidget(QCheckBox("Включить островки"))
+        grid_isl = QGridLayout()
+        grid_isl.addWidget(QLabel("X-размер"), 0, 0);
+        grid_isl.addWidget(QLineEdit("5,000"), 0, 1)
+        grid_isl.addWidget(QLabel("Y-размер"), 1, 0);
+        grid_isl.addWidget(QLineEdit("5,000"), 1, 1)
+        grid_isl.addWidget(QLabel("X-сдвиг"), 0, 2);
+        grid_isl.addWidget(QLineEdit("2,500"), 0, 3)
+        grid_isl.addWidget(QLabel("Y-сдвиг"), 1, 2);
+        grid_isl.addWidget(QLineEdit("2,500"), 1, 3)
+        grid_isl.addWidget(QLabel("Угол"), 2, 0);
+        grid_isl.addWidget(QLineEdit("0,000"), 2, 1)
+        lo_isl.addLayout(grid_isl)
+        main_layout.addWidget(grp_isl)
+
+        # Кнопки внизу
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_yes = QPushButton("Да")
+        btn_yes.clicked.connect(self.accept)  # Закрывает диалог с успехом
+        btn_yes.setFixedWidth(80)
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.clicked.connect(self.reject)  # Закрывает без сохранения
+        btn_cancel.setFixedWidth(80)
+        btn_layout.addWidget(btn_yes)
+        btn_layout.addWidget(btn_cancel)
+        main_layout.addLayout(btn_layout)
