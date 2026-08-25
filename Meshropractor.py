@@ -1,12 +1,16 @@
-# Файл: App.py
+# Файл: Meshropractor.py
 import sys
 import numpy as np
 import trimesh
+import zipfile
+import json
+import io
+import os
 
-# Импорты интерфейса
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCursor
+# Импорты интерфейса (Добавили QLabel)
+from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, QLabel
+from PySide6.QtCore import Qt, QSettings, QSize, QEvent
+from PySide6.QtGui import QColor, QTextCursor, QPixmap, QIcon
 
 import pyvista as pv
 
@@ -25,9 +29,21 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # Инициализируем хранилище настроек
+        self.settings = QSettings("MeshropractorTeam", "Meshropractor")
+
         # 1. ЗАГРУЖАЕМ ИНТЕРФЕЙС
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+
+        # --- ВСТРАИВАЕМ ЗАГОЛОВОК В КАСТОМНУЮ ПАНЕЛЬ ---
+        self.lbl_app_title = QLabel("Meshropractor - Без названия")
+        self.lbl_app_title.setStyleSheet("color: #cccccc; font-size: 14px; font-weight: bold; background: transparent;")
+        self.setWindowTitle("Meshropractor - Без названия")
+
+        # Вставляем заголовок ПОСЛЕ иконок (индекс 3) и добавляем вторую пружину (индекс 4)
+        self.ui.title_layout.insertWidget(3, self.lbl_app_title)
+        self.ui.title_layout.insertStretch(4)
 
         # 2. ПЕРЕМЕННЫЕ ЛОГИКИ
         self.cad_mesh = None
@@ -44,6 +60,12 @@ class MainWindow(QMainWindow):
         self.ui.action_undo.triggered.connect(self.undo_action)
         self.ui.action_redo.triggered.connect(self.redo_action)
 
+        # --- Стартовая страница ---
+        self.ui.btn_new_project.clicked.connect(self.action_new_project)
+        self.ui.btn_open_project.clicked.connect(self.action_open_project)
+        self.ui.btn_recent_projects.clicked.connect(self.open_recent_gallery)
+        self.ui.btn_back_to_start.clicked.connect(lambda: self.ui.stack.setCurrentWidget(self.ui.page_start))
+
         self.ui.tree.itemChanged.connect(self.on_tree_visibility_changed)
         self.ui.plotter.add_key_event('space', self.on_space_pressed)
 
@@ -58,6 +80,11 @@ class MainWindow(QMainWindow):
         # Вкладка 2
         self.ui.btn_run_comp.clicked.connect(self.run_comp)
         self.ui.btn_save.clicked.connect(self.save_result)
+
+        # --- Вкладка Слайсера ---
+        self.ui.btn_load_slicer_part.clicked.connect(self.load_slicer_part)
+        self.ui.btn_load_slicer_supp.clicked.connect(self.load_slicer_supp)
+        self.ui.btn_run_slice.clicked.connect(self.start_slicing)
 
         # Панель слоев
         self.ui.chk_view_cad.stateChanged.connect(self.update_visibility)
@@ -77,6 +104,9 @@ class MainWindow(QMainWindow):
         self.ui.btn_clear_heat.clicked.connect(self.clear_heatmap)
         self.ui.sliders["heat_limit"][0].valueChanged.connect(self.update_heatmap_limit)
 
+        # Глобальный перехватчик движений мыши, чтобы курсор не залипал
+        QApplication.instance().installEventFilter(self)
+
     # === ЛОГИКА ПЕРЕТАСКИВАНИЯ БЕЗРАМОЧНОГО ОКНА ===
     def _check_resize_zone(self, pos):
         x, y = pos.x(), pos.y()
@@ -93,16 +123,24 @@ class MainWindow(QMainWindow):
         return dir
 
     def _update_cursor(self, dir):
-        if dir in ["T", "B"]:
-            self.setCursor(Qt.SizeVerCursor)
-        elif dir in ["L", "R"]:
-            self.setCursor(Qt.SizeHorCursor)
-        elif dir in ["TL", "BR"]:
-            self.setCursor(Qt.SizeFDiagCursor)
-        elif dir in ["TR", "BL"]:
-            self.setCursor(Qt.SizeBDiagCursor)
+        if dir in ["T", "B"]: self.setCursor(Qt.SizeVerCursor)
+        elif dir in ["L", "R"]: self.setCursor(Qt.SizeHorCursor)
+        elif dir in ["TL", "BR"]: self.setCursor(Qt.SizeFDiagCursor)
+        elif dir in ["TR", "BL"]: self.setCursor(Qt.SizeBDiagCursor)
         else:
-            self.setCursor(Qt.ArrowCursor)
+            self.unsetCursor() # <--- Сбрасываем курсор окна на стандартный
+
+    def eventFilter(self, obj, event):
+        # Глобально ловим движение мыши, где бы она ни находилась
+        if event.type() == QEvent.MouseMove and not getattr(self, '_resizing', False):
+            if event.buttons() == Qt.NoButton:
+                pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                dir = self._check_resize_zone(pos)
+                if dir:
+                    self._update_cursor(dir)
+                else:
+                    self.unsetCursor()
+        return super().eventFilter(obj, event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -116,24 +154,18 @@ class MainWindow(QMainWindow):
             event.accept()
 
     def mouseMoveEvent(self, event):
-        pos = event.position().toPoint()
         global_pos = event.globalPosition().toPoint()
 
-        if event.buttons() == Qt.NoButton:
-            self._update_cursor(self._check_resize_zone(pos))
-        elif getattr(self, '_resizing', False):
+        # Оставили здесь только логику физического изменения размера и перетаскивания окна
+        if getattr(self, '_resizing', False):
             dx = global_pos.x() - self._start_mouse_pos.x()
             dy = global_pos.y() - self._start_mouse_pos.y()
             x, y, w, h = self._start_geometry.getRect()
 
-            if 'L' in self._resize_dir:
-                w -= dx; x += dx
-            elif 'R' in self._resize_dir:
-                w += dx
-            if 'T' in self._resize_dir:
-                h -= dy; y += dy
-            elif 'B' in self._resize_dir:
-                h += dy
+            if 'L' in self._resize_dir: w -= dx; x += dx
+            elif 'R' in self._resize_dir: w += dx
+            if 'T' in self._resize_dir: h -= dy; y += dy
+            elif 'B' in self._resize_dir: h += dy
 
             if w < 800:
                 if 'L' in self._resize_dir: x += (w - 800)
@@ -228,10 +260,6 @@ class MainWindow(QMainWindow):
             self.actors[actor_key].SetVisibility(is_visible)
             self.ui.plotter.render()
 
-    # === ЛОГИКА КНОПОК ===
-    def save_project(self):
-        self.log("> Функция сохранения проекта в разработке...")
-
     def undo_action(self):
         self.log("> Возврат к предыдущему состоянию")
 
@@ -308,7 +336,6 @@ class MainWindow(QMainWindow):
         for actor in self.pt_actors: self.ui.plotter.remove_actor(actor)
         self.pt_actors.clear()
         self.ui.lbl_pts.setText("Точек на CAD: 0 | Точек на Скане: 0")
-        self.log("Все выбранные точки сброшены.")
 
     def run_icp(self):
         if not self.cad_mesh or not self.scan_mesh: return self.log("[!] ОШИБКА: Загрузите обе модели!")
@@ -341,27 +368,20 @@ class MainWindow(QMainWindow):
         self.log("\n>>> Расчет цветовой карты...")
         self.ui.btn_heatmap.setEnabled(False)
         try:
-            if not HAS_O3D:
-                self.log("[!] Для Heatmap требуется Open3D.")
-                return
-
+            if not HAS_O3D: return self.log("[!] Для Heatmap требуется Open3D.")
             cad_tmesh = o3d.t.geometry.TriangleMesh(
                 o3d.core.Tensor(np.array(self.cad_mesh.vertices, dtype=np.float32)),
                 o3d.core.Tensor(np.array(self.cad_mesh.faces, dtype=np.int32))
             )
             scene = o3d.t.geometry.RaycastingScene()
             scene.add_triangles(cad_tmesh)
-
             query_points = o3d.core.Tensor(np.array(self.scan_mesh.vertices, dtype=np.float32))
             signed_dists = scene.compute_signed_distance(query_points).numpy()
-
             pv_heatmap = self.trimesh_to_pyvista(self.scan_mesh)
             pv_heatmap['Deviation'] = signed_dists
-
             if self.actors["Heatmap"]: self.ui.plotter.remove_actor(self.actors["Heatmap"])
             self.ui.chk_view_cad.setChecked(False)
             self.ui.chk_view_scan.setChecked(False)
-
             limit = self.ui.sliders["heat_limit"][0].value() / self.ui.sliders["heat_limit"][1]
             self.actors["Heatmap"] = self.ui.plotter.add_mesh(
                 pv_heatmap, scalars='Deviation', cmap='turbo', clim=[-limit, limit],
@@ -417,10 +437,8 @@ class MainWindow(QMainWindow):
         self.result_mesh = result_mesh
         self.show_mesh("Result", self.result_mesh)
         self.add_tree_item(self.ui.cat_res, "Compensated_Part.stl", "Result")
-
         if self.ui.cat_scan.childCount() > 0:
             self.ui.cat_scan.child(0).setCheckState(0, Qt.Unchecked)
-
         self.ui.btn_run_comp.setEnabled(True)
         self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
         self.ui.btn_save.setEnabled(True)
@@ -431,6 +449,233 @@ class MainWindow(QMainWindow):
             if path:
                 self.result_mesh.export(path)
                 self.log(f"✅ Успешно сохранено: {path}")
+
+    # ==========================================
+    # ЛОГИКА СЛАЙСЕРА
+    # ==========================================
+    def load_slicer_part(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Выберите деталь для нарезки", "", "STL Files (*.stl)")
+        if path:
+            self.ui.lbl_slicer_part.setText(f"Деталь: {path.split('/')[-1]}")
+            self.slicer_part_path = path
+
+    def load_slicer_supp(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Выберите поддержки (необязательно)", "", "STL Files (*.stl)")
+        if path:
+            self.ui.lbl_slicer_supp.setText(f"Поддержки: {path.split('/')[-1]}")
+            self.slicer_supp_path = path
+
+    def start_slicing(self):
+        if not hasattr(self, 'slicer_part_path') or not self.slicer_part_path:
+            self.log("[!] ОШИБКА СЛАЙСЕРА: Деталь не выбрана!")
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить файл Concept Laser", "sliced_job.cls",
+                                                  "CLS Files (*.cls)")
+        if not out_path: return
+
+        try:
+            layer_height = float(self.ui.input_layer_th.text())
+        except ValueError:
+            self.log("[!] ОШИБКА СЛАЙСЕРА: Неверный формат толщины слоя!")
+            return
+
+        supp_path = getattr(self, 'slicer_supp_path', None)
+
+        self.log(f"\n=== ЗАПУСК СЛАЙСЕРА ===")
+        self.log(f"Деталь: {self.slicer_part_path}")
+        self.log(f"Толщина слоя: {layer_height} мм")
+
+        self.ui.btn_run_slice.setEnabled(False)
+        self.ui.btn_run_slice.setText("⏳ Идет нарезка слоев...")
+        self.ui.slicer_progress.setValue(0)
+
+        from Workers_Meshropractor import SlicerWorker
+        self.slicer_worker = SlicerWorker(self.slicer_part_path, supp_path, out_path, layer_height)
+
+        self.slicer_worker.progress.connect(self.ui.slicer_progress.setValue)
+        self.slicer_worker.finished.connect(self.on_slicer_finished)
+        self.slicer_worker.error.connect(self.on_slicer_error)
+        self.slicer_worker.start()
+
+    def on_slicer_finished(self, msg):
+        self.log(f"✅ {msg}")
+        self.ui.btn_run_slice.setEnabled(True)
+        self.ui.btn_run_slice.setText("🚀 Сгенерировать .CLS")
+
+    def on_slicer_error(self, msg):
+        self.log(msg)
+        self.ui.btn_run_slice.setEnabled(True)
+        self.ui.btn_run_slice.setText("🚀 Сгенерировать .CLS")
+
+    # ==========================================
+    # ПАМЯТЬ, ОЧИСТКА И НЕДАВНИЕ ПРОЕКТЫ
+    # ==========================================
+    def update_title(self, project_name=None):
+        """Обновляет заголовок и в панели задач, и на кастомной рамке"""
+        title = f"Meshropractor - {project_name}" if project_name else "Meshropractor - Без названия"
+        self.setWindowTitle(title)
+        self.lbl_app_title.setText(title)
+
+    def clear_project_data(self):
+        """Полностью очищает память и 3D-сцену для нового проекта"""
+        self.clear_picks()
+        self.cad_mesh = None
+        self.scan_mesh = None
+        self.result_mesh = None
+        self.ui.plotter.clear()
+        self.ui.plotter.add_axes()
+        self.ui.cat_cad.takeChildren()
+        self.ui.cat_scan.takeChildren()
+        self.ui.cat_res.takeChildren()
+
+        # Сбрасываем слайсер
+        if hasattr(self, 'slicer_part_path'):
+            self.slicer_part_path = ""
+            self.ui.lbl_slicer_part.setText("Деталь: Не выбрана")
+        if hasattr(self, 'slicer_supp_path'):
+            self.slicer_supp_path = ""
+            self.ui.lbl_slicer_supp.setText("Поддержки: Не выбраны (Опционально)")
+
+        self.log("\n[i] Память и 3D-сцена очищены.")
+
+    def add_to_recent(self, path):
+        recent = self.settings.value("recent_files", [])
+        if path in recent: recent.remove(path)
+        recent.insert(0, path)
+        recent = recent[:12]
+        self.settings.setValue("recent_files", recent)
+
+    def open_recent_gallery(self):
+        self.ui.stack.setCurrentWidget(self.ui.page_recent)
+        for i in reversed(range(self.ui.recent_layout.count())):
+            widget = self.ui.recent_layout.itemAt(i).widget()
+            if widget: widget.deleteLater()
+
+        recent_files = self.settings.value("recent_files", [])
+        row, col = 0, 0
+        for path in recent_files:
+            if not os.path.exists(path): continue
+
+            card = QToolButton()
+            card.setFixedSize(220, 240)
+            card.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            card.setCursor(Qt.PointingHandCursor)
+
+            pixmap = QPixmap()
+            try:
+                with zipfile.ZipFile(path, 'r') as zf:
+                    if 'preview.png' in zf.namelist():
+                        pixmap.loadFromData(zf.read('preview.png'))
+            except:
+                pass
+
+            if not pixmap.isNull():
+                card.setIcon(QIcon(pixmap))
+                card.setIconSize(QSize(200, 180))
+
+            card.setText(os.path.basename(path))
+            card.clicked.connect(lambda ch=False, p=path: self.load_mrp_file(p))
+            card.setStyleSheet(
+                "QToolButton { background-color: white; border: 1px solid #ccc; border-radius: 5px; color: black; font-weight: bold;} QToolButton:hover { border: 2px solid #b31b1b; }")
+
+            self.ui.recent_layout.addWidget(card, row, col)
+            col += 1
+            if col > 3:
+                col = 0
+                row += 1
+
+    def save_project(self):
+        if not self.cad_mesh and not self.scan_mesh:
+            self.log("[!] ОШИБКА: Проект пуст, нечего сохранять.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить проект", "New_Project.mrp",
+                                              "MeshRopractor Project (*.mrp)")
+        if not path: return
+
+        self.log(f"\n⏳ Сохранение проекта в {path}...")
+        try:
+            img_array = self.ui.plotter.screenshot(transparent_background=False)
+            from PIL import Image
+            img = Image.fromarray(img_array)
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='PNG')
+            img_bytes = img_byte_arr.getvalue()
+
+            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                if self.cad_mesh: zf.writestr('meshes/cad.stl', self.cad_mesh.export(file_type='stl'))
+                if self.scan_mesh: zf.writestr('meshes/scan.stl', self.scan_mesh.export(file_type='stl'))
+                if self.result_mesh: zf.writestr('meshes/result.stl', self.result_mesh.export(file_type='stl'))
+
+                zf.writestr('preview.png', img_bytes)
+
+                meta = {
+                    "version": "1.1",
+                    "cad_pts": [list(p) for p in self.cad_pts],
+                    "scan_pts": [list(p) for p in self.scan_pts]
+                }
+                zf.writestr('project.json', json.dumps(meta, indent=4))
+
+            self.add_to_recent(path)
+            self.update_title(os.path.basename(path))  # <-- ОБНОВЛЯЕМ НАЗВАНИЕ ПОСЛЕ СОХРАНЕНИЯ
+            self.log("✅ Проект успешно сохранен!")
+        except Exception as e:
+            self.log(f"[!] Ошибка при сохранении: {str(e)}")
+
+    def action_new_project(self):
+        # ОЧИЩАЕМ СЦЕНУ ПЕРЕД НОВЫМ ПРОЕКТОМ
+        self.clear_project_data()
+        self.update_title(None)
+        self.ui.stack.setCurrentWidget(self.ui.page_predef)
+        self.log("\n>>> Создан новый проект. Загрузите CAD и Скан для начала работы.")
+
+    def action_open_project(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Открыть проект", "", "MeshRopractor (*.mrp)")
+        if path: self.load_mrp_file(path)
+
+    def load_mrp_file(self, path):
+        self.log(f"\n⏳ Открытие проекта {path}...")
+        self.ui.stack.setCurrentWidget(self.ui.page_predef)
+
+        # ОЧИЩАЕМ СЦЕНУ ПЕРЕД ЗАГРУЗКОЙ НОВОГО
+        self.clear_project_data()
+
+        try:
+            with zipfile.ZipFile(path, 'r') as zf:
+                file_list = zf.namelist()
+                meta = json.loads(zf.read('project.json').decode('utf-8')) if 'project.json' in file_list else {}
+
+                if 'meshes/cad.stl' in file_list:
+                    self.cad_mesh = trimesh.load(io.BytesIO(zf.read('meshes/cad.stl')), file_type='stl')
+                    self.show_mesh("CAD", self.cad_mesh)
+                    self.add_tree_item(self.ui.cat_cad, "CAD (из проекта)", "CAD")
+
+                if 'meshes/scan.stl' in file_list:
+                    self.scan_mesh = trimesh.load(io.BytesIO(zf.read('meshes/scan.stl')), file_type='stl')
+                    self.show_mesh("Scan", self.scan_mesh)
+                    self.add_tree_item(self.ui.cat_scan, "Scan (из проекта)", "Scan")
+
+                if 'meshes/result.stl' in file_list:
+                    self.result_mesh = trimesh.load(io.BytesIO(zf.read('meshes/result.stl')), file_type='stl')
+                    self.show_mesh("Result", self.result_mesh)
+                    self.add_tree_item(self.ui.cat_res, "Result (из проекта)", "Result")
+
+                self.pick_mode = 'CAD'
+                for pt in meta.get("cad_pts", []): self.place_marker(pt)
+                self.pick_mode = 'Scan'
+                for pt in meta.get("scan_pts", []): self.place_marker(pt)
+                self.pick_mode = None
+
+            self.add_to_recent(path)
+            self.update_title(os.path.basename(path))  # <-- ОБНОВЛЯЕМ НАЗВАНИЕ ПОСЛЕ ЗАГРУЗКИ
+            self.ui.plotter.reset_camera()
+            self.log("✅ Проект успешно восстановлен!")
+
+        except zipfile.BadZipFile:
+            self.log("[!] ОШИБКА: Файл поврежден или не является архивом .mrp")
+        except Exception as e:
+            self.log(f"[!] Ошибка: {str(e)}")
 
 
 if __name__ == '__main__':

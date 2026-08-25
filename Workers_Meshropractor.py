@@ -1,4 +1,4 @@
-# Файл: workers.py
+# Файл: Workers_Meshropractor.py
 import numpy as np
 import trimesh
 import trimesh.remesh
@@ -6,15 +6,43 @@ from scipy.interpolate import RBFInterpolator
 import concurrent.futures
 
 from PySide6.QtCore import QThread, Signal
+from CL_Slicer import slice_stl_to_cls
 
 # Пытаемся безопасно импортировать Open3D
 try:
     import open3d as o3d
-
     HAS_O3D = True
 except ImportError:
     HAS_O3D = False
 
+# ==========================================
+# ПОТОК 0: СЛАЙСИНГ (Экспорт в .CLS)
+# ==========================================
+class SlicerWorker(QThread):
+    progress = Signal(int)
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, part_path, supp_path, out_path, layer_height):
+        super().__init__()
+        self.part_path = part_path
+        self.supp_path = supp_path
+        self.out_path = out_path
+        self.layer_height = layer_height
+
+    def run(self):
+        try:
+            # Запускаем нашу математику и передаем сигнал progress как callback
+            slice_stl_to_cls(
+                self.part_path,
+                self.supp_path,
+                self.out_path,
+                self.layer_height,
+                progress_callback=self.progress.emit
+            )
+            self.finished.emit("Слайсинг успешно завершен!")
+        except Exception as e:
+            self.error.emit(f"Ошибка слайсинга: {str(e)}")
 
 # ==========================================
 # ПОТОК 1: СОВМЕЩЕНИЕ (ICP - Iterative Closest Point)
