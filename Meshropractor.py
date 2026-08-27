@@ -40,8 +40,10 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("MeshropractorTeam", "Meshropractor")
 
         # 1. ЗАГРУЖАЕМ ИНТЕРФЕЙС
+        print("[DEBUG] Перед self.ui.setupUi(self)...", flush=True)
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+        print("[DEBUG] self.ui.setupUi(self) завершен успешно.", flush=True)
 
         # --- ВСТРАИВАЕМ ЗАГОЛОВОК В КАСТОМНУЮ ПАНЕЛЬ ---
         self.lbl_app_title = QLabel("Meshropractor - Без названия")
@@ -112,7 +114,7 @@ class MainWindow(QMainWindow):
         self.ui.sliders["heat_limit"][0].valueChanged.connect(self.update_heatmap_limit)
 
         # Глобальный перехватчик движений мыши, чтобы курсор не залипал
-        QApplication.instance().installEventFilter(self)
+        #QApplication.instance().installEventFilter(self)
 
     # === ЛОГИКА ПЕРЕТАСКИВАНИЯ БЕЗРАМОЧНОГО ОКНА ===
     def _check_resize_zone(self, pos):
@@ -136,23 +138,6 @@ class MainWindow(QMainWindow):
         elif dir in ["TR", "BL"]: self.setCursor(Qt.SizeBDiagCursor)
         else:
             self.unsetCursor() # <--- Сбрасываем курсор окна на стандартный
-
-    def eventFilter(self, obj, event):
-        # ЗАЩИТА ОТ КРАША: Если окно еще не появилось на экране (во время сплеш-скрина),
-        # строго запрещаем программе вычислять координаты!
-        if not self.isVisible():
-            return super().eventFilter(obj, event)
-
-        # Глобально ловим движение мыши, где бы она ни находилась
-        if event.type() == QEvent.MouseMove and not getattr(self, '_resizing', False):
-            if event.buttons() == Qt.NoButton:
-                pos = self.mapFromGlobal(event.globalPosition().toPoint())
-                dir = self._check_resize_zone(pos)
-                if dir:
-                    self._update_cursor(dir)
-                else:
-                    self.unsetCursor()
-        return super().eventFilter(obj, event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -204,22 +189,29 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Корректно закрываем потоки и 3D-сцены перед выходом"""
 
-        # 1. Жестко останавливаем потоки расчетов, если они еще работают
-        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
-            self.log("Принудительная остановка расчетов...")
-            self.comp_thread.terminate()  # Жестко убиваем поток
-            self.comp_thread.wait()  # Ждем завершения
-
-        if hasattr(self, 'align_thread') and self.align_thread.isRunning():
-            self.align_thread.terminate()
-            self.align_thread.wait()
+        # 1. ВЕЖЛИВО просим фоновые потоки остановиться.
+        #    ВАЖНО: QThread.terminate() здесь раньше "жестко убивал" поток прямо
+        #    посреди вычислений Open3D/SciPy/ThreadPoolExecutor. Принудительное убийство
+        #    потока, который в этот момент выполняет нативный (C/C++) код, оставляет
+        #    память процесса в неопределенном состоянии — именно это и дает крах
+        #    Process finished with exit code -1073741819 (0xC0000005), т.е. access violation.
+        #    Поэтому вместо terminate() используем кооперативную отмену: просим поток
+        #    прерваться (requestInterruption) и ждем его штатного завершения.
+        for attr_name in ("comp_thread", "align_thread"):
+            thread = getattr(self, attr_name, None)
+            if thread is not None and thread.isRunning():
+                self.log(f"Остановка фонового расчета ({attr_name})...")
+                thread.requestInterruption()
+                if not thread.wait(5000):
+                    self.log(f"[!] {attr_name} не успел завершиться штатно за 5с — "
+                             f"поток корректно самозавершится в фоне, окно все равно закроется.")
 
         # 2. Аккуратно закрываем графические 3D-ядра
         try:
             if hasattr(self, 'ui') and hasattr(self.ui, 'plotter'):
                 self.ui.plotter.close()
-            if hasattr(self, 'slicer_plotter'):
-                self.slicer_plotter.close()
+            if hasattr(self, 'ui') and getattr(self.ui, 'slicer_plotter', None) is not None:
+                self.ui.slicer_plotter.close()
         except Exception:
             pass
 
@@ -450,6 +442,13 @@ class MainWindow(QMainWindow):
     def run_comp(self):
         if not self.cad_mesh or not self.scan_mesh: return
 
+        # Защита от повторного запуска, пока предыдущий поток еще не успел
+        # завершиться после отмены (иначе два потока будут одновременно
+        # писать в разделяемые ресурсы Open3D/ThreadPoolExecutor).
+        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
+            self.log("[!] Предыдущий расчет еще не завершился, подождите пару секунд и повторите.")
+            return
+
         # 1. Меняем настройки на окно с прогресс-баром
         self.ui.comp_stack.setCurrentIndex(1)
         self.ui.comp_progress_bar.setValue(0)
@@ -476,12 +475,16 @@ class MainWindow(QMainWindow):
         self.comp_thread.start()
 
     def cancel_comp(self):
-        """Мгновенно прерывает расчет и возвращает интерфейс"""
-        # 1. Убиваем процесс, если он запущен
+        """Прерывает расчет и возвращает интерфейс (без опасного terminate())"""
+        # 1. Просим поток остановиться на ближайшей безопасной точке.
+        #    НЕ используем terminate(): поток внутри себя крутит ThreadPoolExecutor
+        #    и нативные вызовы Open3D/SciPy, и жесткое убийство ровно в момент
+        #    выполнения такого кода — главная причина краха 0xC0000005.
+        #    Поток сам проверяет isInterruptionRequested() и тихо выходит из run(),
+        #    не отправляя finished_signal, поэтому on_comp_done просто не сработает.
         if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
-            self.log("[!] Расчет принудительно остановлен пользователем.")
-            self.comp_thread.terminate()  # Жесткий стоп математики
-            self.comp_thread.wait()  # Ожидаем завершения очистки памяти
+            self.log("[!] Расчет остановлен пользователем — поток завершится на ближайшей проверке...")
+            self.comp_thread.requestInterruption()
 
         # 2. Возвращаем интерфейс обратно на настройки
         self.ui.comp_stack.setCurrentIndex(0)
@@ -698,6 +701,15 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    # ВАЖНО: в интерфейсе создаются ДВА независимых VTK-виджета (pyvistaqt QtInteractor) -
+    # self.ui.plotter (вкладка предеформации) и self.ui.slicer_plotter (вкладка слайсера).
+    # Чтобы несколько VTK/OpenGL контекстов корректно уживались в одном PySide6-процессе
+    # на Windows, атрибут AA_ShareOpenGLContexts нужно выставить ДО создания QApplication.
+    # Без этого combo PySide6 + VTK (через pyvistaqt) нередко падает с access violation
+    # (Process finished with exit code -1073741819 / 0xC0000005), особенно при переключении
+    # между вкладками или при первой отрисовке второго 3D-виджета.
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+
     app = QApplication(sys.argv)
 
     # Загружаем картинку для сплеш-скрина
@@ -727,7 +739,9 @@ if __name__ == "__main__":
 
     # --- Создание главного окна ---
     # (В этот момент программа "задумывается", загружая UI и PyVista)
+    print("[DEBUG] Перед window = MainWindow()...", flush=True)
     window = MainWindow()
+    print("[DEBUG] window = MainWindow() завершен успешно.", flush=True)
 
     splash.showMessage("Загрузка компонентов интерфейса...", Qt.AlignBottom | Qt.AlignCenter, QColor("#FFFFFF"))
     app.processEvents()

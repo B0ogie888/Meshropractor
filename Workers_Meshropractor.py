@@ -9,11 +9,14 @@ from PySide6.QtCore import QThread, Signal
 #from CL_Slicer import slice_stl_to_cls
 
 # Пытаемся безопасно импортировать Open3D
+print("[DEBUG] Перед import open3d...", flush=True)
 try:
     import open3d as o3d
     HAS_O3D = True
+    print("[DEBUG] open3d импортирован успешно.", flush=True)
 except ImportError:
     HAS_O3D = False
+    print("[DEBUG] open3d НЕ установлен (ImportError) - продолжаем без него.", flush=True)
 
 # ==========================================
 # ПОТОК 0: СЛАЙСИНГ (Экспорт в .CLS)
@@ -80,6 +83,10 @@ class AlignmentThread(QThread):
                 self.log_signal.emit("2. Грубое позиционирование (ПО ЦЕНТРАМ МАСС)...")
                 trans_init[:3, 3] = target_pc.get_center() - source_pc.get_center()
 
+            if self.isInterruptionRequested():
+                self.log_signal.emit("\n[i] Совмещение отменено пользователем.")
+                return
+
             # Тонкое совмещение
             self.log_signal.emit("3. Тонкое совмещение ICP (до 2000 итераций)...")
             reg_p2p = o3d.pipelines.registration.registration_icp(
@@ -133,6 +140,9 @@ class CompensationThread(QThread):
                 v, f = trimesh.remesh.subdivide_to_size(cad_mesh.vertices, cad_mesh.faces, max_edge=s['edge_len'])
                 cad_mesh = trimesh.Trimesh(vertices=v, faces=f)
 
+            if self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
             self.progress_signal.emit(15)
 
             # 2. Маячки
@@ -140,6 +150,9 @@ class CompensationThread(QThread):
             ctrl_cad_verts, face_indices = trimesh.sample.sample_surface(cad_mesh, s['points'])
             ctrl_cad_normals = np.array(cad_mesh.face_normals[face_indices])
 
+            if self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
             self.progress_signal.emit(25)
 
             # 3. Raycasting
@@ -162,8 +175,16 @@ class CompensationThread(QThread):
                 return locs, np.where(valid)[0], tri_idx[valid]
 
             locs_out, ray_idx_out, tri_idx_out = get_hits_o3d(ctrl_cad_verts, ctrl_cad_normals, "Поиск утолщений")
+
+            if self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
+
             locs_in, ray_idx_in, tri_idx_in = get_hits_o3d(ctrl_cad_verts, -ctrl_cad_normals, "Поиск усадки")
 
+            if self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
             self.progress_signal.emit(40)
 
             # 4. Анализ попаданий
@@ -205,6 +226,22 @@ class CompensationThread(QThread):
                     final_ctrl_cad.append(ctrl_cad_verts[i])
                     final_error_vectors.append(np.zeros(3))
 
+            # ЗАЩИТА: если лучи вообще не попали в скан (модели не совмещены ICP,
+            # скан обрезан, или "Строгость нормалей"/"Лимит аномалий" выставлены
+            # слишком жестко), final_ctrl_cad останется пустым или почти пустым.
+            # Передача такого вырожденного набора точек в RBFInterpolator/scipy
+            # может привести не к понятной Python-ошибке, а к падению нативного
+            # кода — поэтому проверяем ДО вызова RBF и выходим с понятным логом.
+            if len(final_ctrl_cad) < 4:
+                self.log(f"\n[!] ОШИБКА: Найдено только {len(final_ctrl_cad)} валидных точек совпадения "
+                         f"CAD/скан (нужно минимум 4). Проверьте: совмещены ли модели через ICP (Шаг 1), "
+                         f"не слишком ли строгие 'Строгость нормалей' / 'Лимит аномалий', "
+                         f"включен ли 'Якорить пустоты сканера'.")
+                return
+
+            if self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
             self.progress_signal.emit(50)
 
             # 5. Математика RBF
@@ -218,6 +255,9 @@ class CompensationThread(QThread):
                 rbf = RBFInterpolator(np.array(final_ctrl_cad), np.array(final_error_vectors),
                                       kernel='thin_plate_spline', smoothing=s['smooth'])
 
+            if self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
             self.progress_signal.emit(60)  # RBF матрица посчитана
 
             # 6. МНОГОПОТОЧНАЯ ДЕФОРМАЦИЯ
@@ -235,9 +275,21 @@ class CompensationThread(QThread):
             total_chunks = len(starts)
             completed = 0
 
+            cancelled = False
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(process_rbf_chunk, s) for start_idx in starts]
+                futures = [executor.submit(process_rbf_chunk, start_idx) for start_idx in starts]
                 for future in concurrent.futures.as_completed(futures):
+                    if self.isInterruptionRequested():
+                        # НЕ убиваем поток снаружи и НЕ прерываем уже стартовавшие
+                        # задачи силой — просто отменяем то, что еще не запустилось,
+                        # и даем executor'у (блок with) штатно дождаться завершения
+                        # уже выполняющихся чанков. Это медленнее, чем terminate(),
+                        # зато безопасно для памяти процесса.
+                        for f in futures:
+                            f.cancel()
+                        cancelled = True
+                        break
+
                     start_idx, end_idx, result_chunk = future.result()
                     compensated_verts[start_idx:end_idx] = result_chunk
                     completed += 1
@@ -245,6 +297,10 @@ class CompensationThread(QThread):
                     # Плавно заполняем прогресс-бар от 60% до 100%
                     current_progress = 60 + int((completed / total_chunks) * 40)
                     self.progress_signal.emit(current_progress)
+
+            if cancelled or self.isInterruptionRequested():
+                self.log("\n[i] Расчет отменен пользователем.")
+                return
 
             cad_mesh.vertices = compensated_verts
             self.log("\n=== ГОТОВО! МОДЕЛЬ УСПЕШНО ДЕФОРМИРОВАНА ===")

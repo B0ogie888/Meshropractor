@@ -16,6 +16,7 @@ class Ui_MainWindow(object):
     """Класс, который отвечает ТОЛЬКО за внешний вид программы (кнопки, цвета, ползунки)"""
 
     def setupUi(self, main_window: QMainWindow):
+        print("[DEBUG] setupUi: старт", flush=True)
         self.sliders = {}
         self.mesh_colors = {
             "CAD": "#1f77b4",
@@ -84,13 +85,19 @@ class Ui_MainWindow(object):
 
         # Вшиваем логотип
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+
+        # Ищем png, если нет - берем ico или jpg
         logo_path = os.path.join(base_path, "assets", "logo.png")
+        if not os.path.exists(logo_path):
+            logo_path = os.path.join(base_path, "assets", "logo.ico")
 
         logo_pixmap = QPixmap(logo_path)
         main_window.setWindowIcon(QIcon(logo_pixmap))
 
         self.logo_label = QLabel()
-        self.logo_label.setPixmap(logo_pixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        # ЗАЩИТА: Масштабируем только если картинка реально загрузилась
+        if not logo_pixmap.isNull():
+            self.logo_label.setPixmap(logo_pixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self.logo_label.setStyleSheet("padding-left: 10px; padding-right: 20px;")
         self.toolbar.addWidget(self.logo_label)
 
@@ -135,32 +142,84 @@ class Ui_MainWindow(object):
         self.base_layout.addWidget(self.stack)
 
         # Создаем экраны
+        print("[DEBUG] -> init_start_page()", flush=True)
         self.page_start = self.init_start_page()
-        self.page_slicer = self.init_slicer_page()
-        self.page_predef = self.init_deformation_page()
-        self.page_inspect = self.create_mockup_page("Зона инспектирования (в разработке...)")
-        self.page_report = self.create_mockup_page("Отчеты (в разработке...)")
-        self.page_recent = self.init_recent_page()
+        print("[DEBUG] <- init_start_page() OK", flush=True)
 
+        print("[DEBUG] -> init_slicer_page() (создаст slicer_plotter)", flush=True)
+        self.page_slicer = self.init_slicer_page()
+        print("[DEBUG] <- init_slicer_page() OK", flush=True)
+
+        print("[DEBUG] -> init_deformation_page() (создаст plotter)", flush=True)
+        self.page_predef = self.init_deformation_page()
+        print("[DEBUG] <- init_deformation_page() OK", flush=True)
+
+        print("[DEBUG] -> create_mockup_page (inspect)", flush=True)
+        self.page_inspect = self.create_mockup_page("Зона инспектирования (в разработке...)")
+        print("[DEBUG] -> create_mockup_page (report)", flush=True)
+        self.page_report = self.create_mockup_page("Отчеты (в разработке...)")
+        print("[DEBUG] -> init_recent_page()", flush=True)
+        self.page_recent = self.init_recent_page()
+        print("[DEBUG] <- все страницы созданы OK", flush=True)
+
+        print("[DEBUG] -> stack.addWidget(page_start)", flush=True)
         self.stack.addWidget(self.page_start)
+        print("[DEBUG] -> stack.addWidget(page_slicer) [содержит slicer_plotter]", flush=True)
         self.stack.addWidget(self.page_slicer)
+        print("[DEBUG] -> stack.addWidget(page_predef) [содержит plotter]", flush=True)
         self.stack.addWidget(self.page_predef)
+        print("[DEBUG] -> stack.addWidget(page_inspect)", flush=True)
         self.stack.addWidget(self.page_inspect)
+        print("[DEBUG] -> stack.addWidget(page_report)", flush=True)
         self.stack.addWidget(self.page_report)
+        print("[DEBUG] -> stack.addWidget(page_recent)", flush=True)
         self.stack.addWidget(self.page_recent)
+        print("[DEBUG] <- все addWidget OK", flush=True)
+
+        # Ленивое создание VTK-сцены слайсера при первом реальном переходе на вкладку
+        # (см. _ensure_slicer_plotter) - это и есть исправление краха 0xC0000005.
+        self.stack.currentChanged.connect(self._on_stack_current_changed)
 
         # Подключаем меню к переключению зон
+        print("[DEBUG] -> connect actions (menu)", flush=True)
         action_start.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_start))
         action_slicer.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_slicer))
         action_predef.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_predef))
         action_inspect.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_inspect))
         action_report.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_report))
+        print("[DEBUG] <- connect actions OK", flush=True)
 
         # Подключаем кнопку "Новый проект" ---
+        print("[DEBUG] -> connect btn_new_project", flush=True)
         self.btn_new_project.clicked.connect(self.show_new_project_dialog)
+        print("[DEBUG] <- connect btn_new_project OK", flush=True)
 
         # Открываем "Старт" по умолчанию при запуске
+        print("[DEBUG] -> stack.setCurrentWidget(page_start)", flush=True)
         self.stack.setCurrentWidget(self.page_start)
+        print("[DEBUG] <- setupUi ПОЛНОСТЬЮ завершен OK", flush=True)
+
+    def _ensure_slicer_plotter(self):
+        """Лениво создает VTK-сцену слайсера при первом реальном открытии вкладки.
+
+        Создание отложено сюда специально: одновременное создание двух VTK/OpenGL-сцен
+        синхронно в setupUi() (до первого show()/цикла отрисовки) роняло процесс с
+        ошибкой доступа 0xC0000005. К моменту, когда пользователь реально переключится
+        на вкладку "Слайсер", главное окно и его первая сцена (self.plotter) уже
+        отрисовались хотя бы раз, и создание второго GL-контекста безопасно.
+        """
+        if self.slicer_plotter is not None:
+            return
+        self.slicer_plotter = QtInteractor(self._slicer_center_container)
+        self.slicer_plotter.setCursor(Qt.ArrowCursor)
+        self.slicer_plotter.set_background('white')
+        self.slicer_plotter.add_axes()
+        self._slicer_center_layout.insertWidget(0, self.slicer_plotter)
+
+    def _on_stack_current_changed(self, index):
+        """Триггерит ленивое создание сцены слайсера при переходе на его вкладку."""
+        if self.stack.widget(index) is self.page_slicer:
+            self._ensure_slicer_plotter()
 
     def show_new_project_dialog(self, checked=False):
         """Открывает диалог выбора и переключает на нужный экран"""
@@ -196,13 +255,17 @@ class Ui_MainWindow(object):
 
         # Декодируем и загружаем наш логотип
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-        logo_path = os.path.join(base_path, "assets", "logo.png") 
+
+        logo_path = os.path.join(base_path, "assets", "logo.png")
+        if not os.path.exists(logo_path):
+            logo_path = os.path.join(base_path, "assets", "logo.ico")
 
         logo_pixmap = QPixmap(logo_path)
 
         lbl_icon = QLabel()
-        # Ставим размер 40x40 пикселей со сглаживанием
-        lbl_icon.setPixmap(logo_pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        # ЗАЩИТА ОТ КРАША
+        if not logo_pixmap.isNull():
+            lbl_icon.setPixmap(logo_pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         lbl_icon.setStyleSheet("padding-right: 10px;")  # Небольшой отступ до текста
 
         lbl_text = QLabel("Meshropractor")
@@ -507,11 +570,17 @@ class Ui_MainWindow(object):
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
 
-        self.slicer_plotter = QtInteractor(center_container)
-        self.slicer_plotter.setCursor(Qt.ArrowCursor)
-        self.slicer_plotter.set_background('white')
-        self.slicer_plotter.add_axes()
-        center_layout.addWidget(self.slicer_plotter.interactor)
+        # ВАЖНО: НЕ создаем QtInteractor (VTK-сцену) здесь!
+        # Диагностика показала: процесс падает с 0xC0000005 ровно в момент, когда ВТОРАЯ
+        # живая VTK/OpenGL-сцена (эта) добавляется в общую иерархию окна, пока первая
+        # (self.plotter на вкладке Предеформации) уже там - т.е. при одновременном
+        # создании двух GL-контекстов подряд, еще до первого цикла отрисовки/event loop.
+        # Вкладка "Слайсер" пока и так не функциональна (слайсинг - заглушка), поэтому
+        # сцену создаем ЛЕНИВО: только при первом реальном переходе пользователя на эту
+        # вкладку (см. _ensure_slicer_plotter / stack.currentChanged ниже в setupUi).
+        self.slicer_plotter = None
+        self._slicer_center_container = center_container
+        self._slicer_center_layout = center_layout
 
         # ТЕМНЫЕ вкладки переключения сценок снизу
         self.scene_tabs = QTabWidget()
@@ -637,7 +706,9 @@ class Ui_MainWindow(object):
         self.left_layout.addWidget(self.tree)
 
         # --- Средняя панель (3D) ---
+        print("[DEBUG] Перед созданием plotter (QtInteractor)...", flush=True)
         self.plotter = QtInteractor(page)
+        print("[DEBUG] plotter создан успешно.", flush=True)
         self.plotter.setCursor(Qt.ArrowCursor)
         self.plotter.set_background('white')
         self.plotter.add_axes()
@@ -648,7 +719,7 @@ class Ui_MainWindow(object):
         self.right_layout.setContentsMargins(5, 5, 5, 5)
 
         self.main_splitter.addWidget(self.left_panel)
-        self.main_splitter.addWidget(self.plotter.interactor)
+        self.main_splitter.addWidget(self.plotter)
         self.main_splitter.addWidget(self.right_panel)
         self.main_splitter.setSizes([250, 950, 400])
 
@@ -872,7 +943,7 @@ class Ui_MainWindow(object):
         prog_layout.addSpacing(20)
         prog_layout.addWidget(self.comp_progress_bar)
         prog_layout.addSpacing(15)  # Отступ между баром и кнопкой
-        prog_layout.addWidget(self.btn_cancel_comp, alignment=Qt.AlignCenter)
+        prog_layout.addWidget(self.btn_cancel_comp, 0, Qt.AlignCenter)
 
         self.comp_stack.addWidget(self.progress_widget)  # Добавляем прогресс на индекс 1
 
@@ -1116,7 +1187,7 @@ class DialogNewProject(QDialog):
         """)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Выберите рабочую среду для нового проекта:"), alignment=Qt.AlignCenter)
+        layout.addWidget(QLabel("Выберите рабочую среду для нового проекта:"), 0, Qt.AlignCenter)
         layout.addSpacing(10)
 
         # Сетка 2x2 для кнопок
