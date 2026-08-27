@@ -138,6 +138,11 @@ class MainWindow(QMainWindow):
             self.unsetCursor() # <--- Сбрасываем курсор окна на стандартный
 
     def eventFilter(self, obj, event):
+        # ЗАЩИТА ОТ КРАША: Если окно еще не появилось на экране (во время сплеш-скрина),
+        # строго запрещаем программе вычислять координаты!
+        if not self.isVisible():
+            return super().eventFilter(obj, event)
+
         # Глобально ловим движение мыши, где бы она ни находилась
         if event.type() == QEvent.MouseMove and not getattr(self, '_resizing', False):
             if event.buttons() == Qt.NoButton:

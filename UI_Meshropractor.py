@@ -11,8 +11,6 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
-# from assets import LOGO_B64
-
 
 class Ui_MainWindow(object):
     """Класс, который отвечает ТОЛЬКО за внешний вид программы (кнопки, цвета, ползунки)"""
@@ -198,7 +196,7 @@ class Ui_MainWindow(object):
 
         # Декодируем и загружаем наш логотип
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-        logo_path = os.path.join(base_path, "assets", "logo.png")  # Укажи точное имя файла
+        logo_path = os.path.join(base_path, "assets", "logo.png") 
 
         logo_pixmap = QPixmap(logo_path)
 

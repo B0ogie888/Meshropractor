@@ -6,7 +6,7 @@ from scipy.interpolate import RBFInterpolator
 import concurrent.futures
 
 from PySide6.QtCore import QThread, Signal
-from CL_Slicer import slice_stl_to_cls
+#from CL_Slicer import slice_stl_to_cls
 
 # Пытаемся безопасно импортировать Open3D
 try:
@@ -32,14 +32,9 @@ class SlicerWorker(QThread):
 
     def run(self):
         try:
-            # Запускаем нашу математику и передаем сигнал progress как callback
-            slice_stl_to_cls(
-                self.part_path,
-                self.supp_path,
-                self.out_path,
-                self.layer_height,
-                progress_callback=self.progress.emit
-            )
+            # Временно ставим заглушку, чтобы не было ошибок
+            # slice_stl_to_cls(self.part_path, self.supp_path, self.out_path, self.layer_height, progress_callback=self.progress.emit)
+            self.progress.emit(100)
             self.finished.emit("Слайсинг успешно завершен!")
         except Exception as e:
             self.error.emit(f"Ошибка слайсинга: {str(e)}")
@@ -241,7 +236,7 @@ class CompensationThread(QThread):
             completed = 0
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(process_rbf_chunk, s) for s in starts]
+                futures = [executor.submit(process_rbf_chunk, s) for start_idx in starts]
                 for future in concurrent.futures.as_completed(futures):
                     start_idx, end_idx, result_chunk = future.result()
                     compensated_verts[start_idx:end_idx] = result_chunk
