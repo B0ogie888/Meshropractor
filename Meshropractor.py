@@ -8,53 +8,35 @@ import json
 import io
 import os
 
-# Получаем абсолютный путь к папке, где лежит этот скрипт (Meshropractor.py)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Указываем путь к папке с картинками
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-
-# Импорты интерфейса (Добавили QLabel)
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, QLabel, QSplashScreen
+from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, \
+    QLabel, QSplashScreen
 from PySide6.QtCore import Qt, QSettings, QSize, QEvent
 from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon
-
 import pyvista as pv
 
-# ИМПОРТИРУЕМ НАШИ СОБСТВЕННЫЕ МОДУЛИ
 from UI_Meshropractor import Ui_MainWindow
 from Workers_Meshropractor import AlignmentThread, CompensationThread, HAS_O3D
 
 if HAS_O3D:
     import open3d as o3d
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
-# ==========================================
-# ГЛАВНАЯ ЛОГИКА ОКНА (Контроллер)
-# ==========================================
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-
-        # Инициализируем хранилище настроек
         self.settings = QSettings("MeshropractorTeam", "Meshropractor")
-
-        # 1. ЗАГРУЖАЕМ ИНТЕРФЕЙС
-        print("[DEBUG] Перед self.ui.setupUi(self)...", flush=True)
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
-        print("[DEBUG] self.ui.setupUi(self) завершен успешно.", flush=True)
 
-        # --- ВСТРАИВАЕМ ЗАГОЛОВОК В КАСТОМНУЮ ПАНЕЛЬ ---
         self.lbl_app_title = QLabel("Meshropractor - Без названия")
         self.lbl_app_title.setStyleSheet("color: #cccccc; font-size: 14px; font-weight: bold; background: transparent;")
         self.setWindowTitle("Meshropractor - Без названия")
-
-        # Вставляем заголовок ПОСЛЕ иконок (индекс 3) и добавляем вторую пружину (индекс 4)
         self.ui.title_layout.insertWidget(3, self.lbl_app_title)
         self.ui.title_layout.insertStretch(4)
 
-        # 2. ПЕРЕМЕННЫЕ ЛОГИКИ
         self.cad_mesh = None
         self.scan_mesh = None
         self.result_mesh = None
@@ -64,21 +46,17 @@ class MainWindow(QMainWindow):
         self.scan_pts = []
         self.pt_actors = []
 
-        # 3. ПОДКЛЮЧАЕМ ЛОГИКУ К КНОПКАМ ИНТЕРФЕЙСА
         self.ui.action_save.triggered.connect(self.save_project)
         self.ui.action_undo.triggered.connect(self.undo_action)
         self.ui.action_redo.triggered.connect(self.redo_action)
 
-        # --- Стартовая страница ---
         self.ui.btn_new_project.clicked.connect(self.action_new_project)
         self.ui.btn_open_project.clicked.connect(self.action_open_project)
         self.ui.btn_recent_projects.clicked.connect(self.open_recent_gallery)
         self.ui.btn_back_to_start.clicked.connect(lambda: self.ui.stack.setCurrentWidget(self.ui.page_start))
 
         self.ui.tree.itemChanged.connect(self.on_tree_visibility_changed)
-        self.ui.plotter.add_key_event('space', self.on_space_pressed)
 
-        # Вкладка 1
         self.ui.btn_load_cad.clicked.connect(self.load_cad)
         self.ui.btn_load_scan.clicked.connect(self.load_scan)
         self.ui.btn_pick_cad.clicked.connect(self.start_pick_cad)
@@ -86,16 +64,12 @@ class MainWindow(QMainWindow):
         self.ui.btn_clear_pts.clicked.connect(self.clear_picks)
         self.ui.btn_run_icp.clicked.connect(self.run_icp)
 
-        # Вкладка 2
         self.ui.btn_run_comp.clicked.connect(self.run_comp)
         self.ui.btn_save.clicked.connect(self.save_result)
         self.ui.btn_cancel_comp.clicked.connect(self.cancel_comp)
 
-        # --- Вкладка Слайсера ---
-        # Подключаем единственную кнопку "Экспорт .CLS" к открытию модального окна
         self.ui.ribbon_btns["Создание срезов Concept Laser"].clicked.connect(self.open_export_dialog)
 
-        # Панель слоев
         self.ui.chk_view_cad.stateChanged.connect(self.update_visibility)
         self.ui.chk_view_scan.stateChanged.connect(self.update_visibility)
         self.ui.chk_view_res.stateChanged.connect(self.update_visibility)
@@ -108,15 +82,13 @@ class MainWindow(QMainWindow):
         self.ui.btn_col_scan.clicked.connect(lambda: self.pick_color("Scan", self.ui.btn_col_scan))
         self.ui.btn_col_res.clicked.connect(lambda: self.pick_color("Result", self.ui.btn_col_res))
 
-        # Панель Анализа
         self.ui.btn_heatmap.clicked.connect(self.generate_heatmap)
         self.ui.btn_clear_heat.clicked.connect(self.clear_heatmap)
         self.ui.sliders["heat_limit"][0].valueChanged.connect(self.update_heatmap_limit)
 
-        # Глобальный перехватчик движений мыши, чтобы курсор не залипал
-        #QApplication.instance().installEventFilter(self)
+        # Глобальный перехватчик движений мыши для растягивания окна
+        QApplication.instance().installEventFilter(self)
 
-    # === ЛОГИКА ПЕРЕТАСКИВАНИЯ БЕЗРАМОЧНОГО ОКНА ===
     def _check_resize_zone(self, pos):
         x, y = pos.x(), pos.y()
         margin = 6
@@ -132,12 +104,32 @@ class MainWindow(QMainWindow):
         return dir
 
     def _update_cursor(self, dir):
-        if dir in ["T", "B"]: self.setCursor(Qt.SizeVerCursor)
-        elif dir in ["L", "R"]: self.setCursor(Qt.SizeHorCursor)
-        elif dir in ["TL", "BR"]: self.setCursor(Qt.SizeFDiagCursor)
-        elif dir in ["TR", "BL"]: self.setCursor(Qt.SizeBDiagCursor)
+        if dir in ["T", "B"]:
+            self.setCursor(Qt.SizeVerCursor)
+        elif dir in ["L", "R"]:
+            self.setCursor(Qt.SizeHorCursor)
+        elif dir in ["TL", "BR"]:
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif dir in ["TR", "BL"]:
+            self.setCursor(Qt.SizeBDiagCursor)
         else:
-            self.unsetCursor() # <--- Сбрасываем курсор окна на стандартный
+            self.unsetCursor()
+
+    def eventFilter(self, obj, event):
+        # ЗАЩИТА ОТ КРАША: не ловим мышь, пока окно не загрузилось полностью
+        if not self.isVisible():
+            return super().eventFilter(obj, event)
+
+        # Ловим движение мыши на границах безрамочного окна
+        if event.type() == QEvent.MouseMove and not getattr(self, '_resizing', False):
+            if event.buttons() == Qt.NoButton:
+                pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                dir = self._check_resize_zone(pos)
+                if dir:
+                    self._update_cursor(dir)
+                else:
+                    self.unsetCursor()
+        return super().eventFilter(obj, event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -152,17 +144,19 @@ class MainWindow(QMainWindow):
 
     def mouseMoveEvent(self, event):
         global_pos = event.globalPosition().toPoint()
-
-        # Оставили здесь только логику физического изменения размера и перетаскивания окна
         if getattr(self, '_resizing', False):
             dx = global_pos.x() - self._start_mouse_pos.x()
             dy = global_pos.y() - self._start_mouse_pos.y()
             x, y, w, h = self._start_geometry.getRect()
 
-            if 'L' in self._resize_dir: w -= dx; x += dx
-            elif 'R' in self._resize_dir: w += dx
-            if 'T' in self._resize_dir: h -= dy; y += dy
-            elif 'B' in self._resize_dir: h += dy
+            if 'L' in self._resize_dir:
+                w -= dx; x += dx
+            elif 'R' in self._resize_dir:
+                w += dx
+            if 'T' in self._resize_dir:
+                h -= dy; y += dy
+            elif 'B' in self._resize_dir:
+                h += dy
 
             if w < 800:
                 if 'L' in self._resize_dir: x += (w - 800)
@@ -187,46 +181,33 @@ class MainWindow(QMainWindow):
         super().leaveEvent(event)
 
     def closeEvent(self, event):
-        """Корректно закрываем потоки и 3D-сцены перед выходом"""
+        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
+            self.log("Принудительная остановка расчетов...")
+            self.comp_thread.terminate()
+            self.comp_thread.wait()
 
-        # 1. ВЕЖЛИВО просим фоновые потоки остановиться.
-        #    ВАЖНО: QThread.terminate() здесь раньше "жестко убивал" поток прямо
-        #    посреди вычислений Open3D/SciPy/ThreadPoolExecutor. Принудительное убийство
-        #    потока, который в этот момент выполняет нативный (C/C++) код, оставляет
-        #    память процесса в неопределенном состоянии — именно это и дает крах
-        #    Process finished with exit code -1073741819 (0xC0000005), т.е. access violation.
-        #    Поэтому вместо terminate() используем кооперативную отмену: просим поток
-        #    прерваться (requestInterruption) и ждем его штатного завершения.
-        for attr_name in ("comp_thread", "align_thread"):
-            thread = getattr(self, attr_name, None)
-            if thread is not None and thread.isRunning():
-                self.log(f"Остановка фонового расчета ({attr_name})...")
-                thread.requestInterruption()
-                if not thread.wait(5000):
-                    self.log(f"[!] {attr_name} не успел завершиться штатно за 5с — "
-                             f"поток корректно самозавершится в фоне, окно все равно закроется.")
+        if hasattr(self, 'align_thread') and self.align_thread.isRunning():
+            self.align_thread.terminate()
+            self.align_thread.wait()
 
-        # 2. Аккуратно закрываем графические 3D-ядра
         try:
-            if hasattr(self, 'ui') and hasattr(self.ui, 'plotter'):
+            if hasattr(self, 'ui') and getattr(self.ui, 'plotter', None):
                 self.ui.plotter.close()
-            if hasattr(self, 'ui') and getattr(self.ui, 'slicer_plotter', None) is not None:
+            if hasattr(self, 'ui') and getattr(self.ui, 'slicer_plotter', None):
                 self.ui.slicer_plotter.close()
         except Exception:
             pass
 
         event.accept()
 
-    # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ЛОГИКИ ===
     def log(self, text, replace=False):
-        # Интерфейсной консоли больше нет, отправляем логи в скрытый системный терминал
         clean_text = text.replace("REPLACE_FLAG", "")
         print(clean_text)
 
     def pick_color(self, key, btn):
         initial_color = QColor(self.ui.mesh_colors[key])
         color = QColorDialog.getColor(initial_color, self, f"Выберите цвет для {key}")
-        if color.isValid():
+        if color.isValid() and self.ui.plotter:
             hex_color = color.name()
             self.ui.mesh_colors[key] = hex_color
             btn.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #555; border-radius: 3px;")
@@ -239,6 +220,7 @@ class MainWindow(QMainWindow):
         return pv.PolyData(tmesh.vertices, faces)
 
     def show_mesh(self, key, mesh):
+        if not self.ui.plotter: return
         pv_mesh = self.trimesh_to_pyvista(mesh)
         if self.actors[key]: self.ui.plotter.remove_actor(self.actors[key])
 
@@ -258,13 +240,14 @@ class MainWindow(QMainWindow):
         self.update_visibility()
 
     def update_visibility(self):
+        if not self.ui.plotter: return
         if self.actors["CAD"]: self.actors["CAD"].SetVisibility(self.ui.chk_view_cad.isChecked())
         if self.actors["Scan"]: self.actors["Scan"].SetVisibility(self.ui.chk_view_scan.isChecked())
         if self.actors["Result"]: self.actors["Result"].SetVisibility(self.ui.chk_view_res.isChecked())
         self.ui.plotter.render()
 
     def update_opacity(self, key, value):
-        if self.actors[key]:
+        if self.actors[key] and self.ui.plotter:
             self.actors[key].GetProperty().SetOpacity(value / 100.0)
             self.ui.plotter.render()
 
@@ -277,7 +260,7 @@ class MainWindow(QMainWindow):
 
     def on_tree_visibility_changed(self, item, column):
         actor_key = item.data(0, Qt.UserRole)
-        if actor_key and self.actors.get(actor_key):
+        if actor_key and self.actors.get(actor_key) and self.ui.plotter:
             is_visible = (item.checkState(0) == Qt.Checked)
             self.actors[actor_key].SetVisibility(is_visible)
             self.ui.plotter.render()
@@ -308,6 +291,12 @@ class MainWindow(QMainWindow):
 
     def start_pick_cad(self):
         if not self.cad_mesh: return self.log("[!] Сначала загрузите CAD!")
+
+        # Ленивая привязка горячей клавиши для VTK-сцены
+        if not getattr(self, '_space_bound', False) and self.ui.plotter:
+            self.ui.plotter.add_key_event('space', self.on_space_pressed)
+            self._space_bound = True
+
         self.pick_mode = 'CAD'
         self.ui.chk_view_cad.setChecked(True)
         self.ui.chk_view_scan.setChecked(False)
@@ -316,6 +305,11 @@ class MainWindow(QMainWindow):
 
     def start_pick_scan(self):
         if not self.scan_mesh: return self.log("[!] Сначала загрузите Скан!")
+
+        if not getattr(self, '_space_bound', False) and self.ui.plotter:
+            self.ui.plotter.add_key_event('space', self.on_space_pressed)
+            self._space_bound = True
+
         self.pick_mode = 'Scan'
         self.ui.chk_view_cad.setChecked(False)
         self.ui.chk_view_scan.setChecked(True)
@@ -323,7 +317,7 @@ class MainWindow(QMainWindow):
         self.log("\n[РЕЖИМ СКАНА] Наведите курсор на деталь и нажмите ПРОБЕЛ.")
 
     def on_space_pressed(self):
-        if not self.pick_mode: return
+        if not self.pick_mode or not self.ui.plotter: return
         try:
             import vtk
             pos = self.ui.plotter.interactor.GetEventPosition()
@@ -336,6 +330,7 @@ class MainWindow(QMainWindow):
             self.log(f"[!] Ошибка лучемета: {str(e)}")
 
     def place_marker(self, point):
+        if not self.ui.plotter: return
         radius = self.cad_mesh.scale * 0.015 if self.cad_mesh else 1.0
         if self.pick_mode == 'CAD':
             self.cad_pts.append(point)
@@ -355,7 +350,8 @@ class MainWindow(QMainWindow):
         self.cad_pts.clear()
         self.scan_pts.clear()
         self.pick_mode = None
-        for actor in self.pt_actors: self.ui.plotter.remove_actor(actor)
+        if getattr(self.ui, 'plotter', None):
+            for actor in self.pt_actors: self.ui.plotter.remove_actor(actor)
         self.pt_actors.clear()
         self.ui.lbl_pts.setText("Точек на CAD: 0 | Точек на Скане: 0")
 
@@ -387,14 +383,14 @@ class MainWindow(QMainWindow):
 
     def generate_heatmap(self):
         if not self.cad_mesh or not self.scan_mesh: return self.log("[!] ОШИБКА: Загрузите модели.")
+        if not getattr(self.ui, 'plotter', None): return
+
         self.log("\n>>> Расчет цветовой карты...")
         self.ui.btn_heatmap.setEnabled(False)
         try:
             if not HAS_O3D: return self.log("[!] Для Heatmap требуется Open3D.")
-            cad_tmesh = o3d.t.geometry.TriangleMesh(
-                o3d.core.Tensor(np.array(self.cad_mesh.vertices, dtype=np.float32)),
-                o3d.core.Tensor(np.array(self.cad_mesh.faces, dtype=np.int32))
-            )
+            cad_tmesh = o3d.t.geometry.TriangleMesh(o3d.core.Tensor(np.array(self.cad_mesh.vertices, dtype=np.float32)),
+                                                    o3d.core.Tensor(np.array(self.cad_mesh.faces, dtype=np.int32)))
             scene = o3d.t.geometry.RaycastingScene()
             scene.add_triangles(cad_tmesh)
             query_points = o3d.core.Tensor(np.array(self.scan_mesh.vertices, dtype=np.float32))
@@ -421,13 +417,13 @@ class MainWindow(QMainWindow):
             self.ui.btn_heatmap.setEnabled(True)
 
     def update_heatmap_limit(self):
-        if self.actors.get("Heatmap") and hasattr(self.actors["Heatmap"].mapper, 'dataset'):
+        if self.actors.get("Heatmap") and hasattr(self.actors["Heatmap"].mapper, 'dataset') and self.ui.plotter:
             limit = self.ui.sliders["heat_limit"][0].value() / self.ui.sliders["heat_limit"][1]
             self.actors["Heatmap"].mapper.scalar_range = [-limit, limit]
             self.ui.plotter.render()
 
     def clear_heatmap(self):
-        if self.actors.get("Heatmap"):
+        if self.actors.get("Heatmap") and self.ui.plotter:
             self.ui.plotter.remove_actor(self.actors["Heatmap"])
             self.actors["Heatmap"] = None
         self.ui.chk_view_scan.setChecked(True)
@@ -435,25 +431,14 @@ class MainWindow(QMainWindow):
         self.log("Отображение сброшено в базовый режим.")
 
     def update_progress_safe(self, value):
-        """Безопасный мостик для обновления UI из фонового потока"""
         if hasattr(self, 'ui') and hasattr(self.ui, 'comp_progress_bar'):
             self.ui.comp_progress_bar.setValue(value)
 
     def run_comp(self):
         if not self.cad_mesh or not self.scan_mesh: return
 
-        # Защита от повторного запуска, пока предыдущий поток еще не успел
-        # завершиться после отмены (иначе два потока будут одновременно
-        # писать в разделяемые ресурсы Open3D/ThreadPoolExecutor).
-        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
-            self.log("[!] Предыдущий расчет еще не завершился, подождите пару секунд и повторите.")
-            return
-
-        # 1. Меняем настройки на окно с прогресс-баром
         self.ui.comp_stack.setCurrentIndex(1)
         self.ui.comp_progress_bar.setValue(0)
-
-        # 2. Блокируем кнопку запуска
         self.ui.btn_run_comp.setEnabled(False)
         self.ui.btn_run_comp.setText("⏳ ИДЕТ РАСЧЕТ...")
 
@@ -475,21 +460,12 @@ class MainWindow(QMainWindow):
         self.comp_thread.start()
 
     def cancel_comp(self):
-        """Прерывает расчет и возвращает интерфейс (без опасного terminate())"""
-        # 1. Просим поток остановиться на ближайшей безопасной точке.
-        #    НЕ используем terminate(): поток внутри себя крутит ThreadPoolExecutor
-        #    и нативные вызовы Open3D/SciPy, и жесткое убийство ровно в момент
-        #    выполнения такого кода — главная причина краха 0xC0000005.
-        #    Поток сам проверяет isInterruptionRequested() и тихо выходит из run(),
-        #    не отправляя finished_signal, поэтому on_comp_done просто не сработает.
         if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
-            self.log("[!] Расчет остановлен пользователем — поток завершится на ближайшей проверке...")
-            self.comp_thread.requestInterruption()
+            self.log("[!] Расчет принудительно остановлен пользователем.")
+            self.comp_thread.terminate()
+            self.comp_thread.wait()
 
-        # 2. Возвращаем интерфейс обратно на настройки
         self.ui.comp_stack.setCurrentIndex(0)
-
-        # 3. Разблокируем кнопку запуска
         self.ui.btn_run_comp.setEnabled(True)
         self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
 
@@ -501,10 +477,7 @@ class MainWindow(QMainWindow):
         if self.ui.cat_scan.childCount() > 0:
             self.ui.cat_scan.child(0).setCheckState(0, Qt.Unchecked)
 
-        # 1. Возвращаем ползунки настроек обратно
         self.ui.comp_stack.setCurrentIndex(0)
-
-        # 2. Разблокируем кнопки
         self.ui.btn_run_comp.setEnabled(True)
         self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
         self.ui.btn_save.setEnabled(True)
@@ -516,40 +489,32 @@ class MainWindow(QMainWindow):
                 self.result_mesh.export(path)
                 self.log(f"✅ Успешно сохранено: {path}")
 
-    # ==========================================
-    # ЛОГИКА СЛАЙСЕРА
-    # ==========================================
     def open_export_dialog(self):
-        """Открывает окно параметров Concept Laser"""
         from UI_Meshropractor import DialogExportCLS
         dialog = DialogExportCLS(self)
-
-        # Если пользователь нажал "Да"
         if dialog.exec():
             self.log("\n>>> Окно экспорта подтверждено. Скоро здесь будет запуск нарезки .CLS с новыми параметрами!")
 
-    # ==========================================
-    # ПАМЯТЬ, ОЧИСТКА И НЕДАВНИЕ ПРОЕКТЫ
-    # ==========================================
     def update_title(self, project_name=None):
-        """Обновляет заголовок и в панели задач, и на кастомной рамке"""
         title = f"Meshropractor - {project_name}" if project_name else "Meshropractor - Без названия"
         self.setWindowTitle(title)
         self.lbl_app_title.setText(title)
 
     def clear_project_data(self):
-        """Полностью очищает память и 3D-сцену для нового проекта"""
         self.clear_picks()
         self.cad_mesh = None
         self.scan_mesh = None
         self.result_mesh = None
-        self.ui.plotter.clear()
-        self.ui.plotter.add_axes()
+
+        # Безопасная очистка сцены
+        if getattr(self.ui, 'plotter', None):
+            self.ui.plotter.clear()
+            self.ui.plotter.add_axes()
+
         self.ui.cat_cad.takeChildren()
         self.ui.cat_scan.takeChildren()
         self.ui.cat_res.takeChildren()
 
-        # Сбрасываем слайсер
         if hasattr(self, 'slicer_part_path'):
             self.slicer_part_path = ""
             self.ui.lbl_slicer_part.setText("Деталь: Не выбрана")
@@ -602,7 +567,7 @@ class MainWindow(QMainWindow):
             self.ui.recent_layout.addWidget(card, row, col)
             col += 1
             if col > 3:
-                col = 0
+                col = 0;
                 row += 1
 
     def save_project(self):
@@ -616,19 +581,22 @@ class MainWindow(QMainWindow):
 
         self.log(f"\n⏳ Сохранение проекта в {path}...")
         try:
-            img_array = self.ui.plotter.screenshot(transparent_background=False)
-            from PIL import Image
-            img = Image.fromarray(img_array)
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='PNG')
-            img_bytes = img_byte_arr.getvalue()
+            # Делаем скриншот только если сцена активна
+            if self.ui.plotter:
+                img_array = self.ui.plotter.screenshot(transparent_background=False)
+                from PIL import Image
+                img = Image.fromarray(img_array)
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='PNG')
+                img_bytes = img_byte_arr.getvalue()
+            else:
+                img_bytes = b""
 
             with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 if self.cad_mesh: zf.writestr('meshes/cad.stl', self.cad_mesh.export(file_type='stl'))
                 if self.scan_mesh: zf.writestr('meshes/scan.stl', self.scan_mesh.export(file_type='stl'))
                 if self.result_mesh: zf.writestr('meshes/result.stl', self.result_mesh.export(file_type='stl'))
-
-                zf.writestr('preview.png', img_bytes)
+                if img_bytes: zf.writestr('preview.png', img_bytes)
 
                 meta = {
                     "version": "1.1",
@@ -638,18 +606,14 @@ class MainWindow(QMainWindow):
                 zf.writestr('project.json', json.dumps(meta, indent=4))
 
             self.add_to_recent(path)
-            self.update_title(os.path.basename(path))  # <-- ОБНОВЛЯЕМ НАЗВАНИЕ ПОСЛЕ СОХРАНЕНИЯ
+            self.update_title(os.path.basename(path))
             self.log("✅ Проект успешно сохранен!")
         except Exception as e:
             self.log(f"[!] Ошибка при сохранении: {str(e)}")
 
     def action_new_project(self):
-        # ОЧИЩАЕМ СЦЕНУ И ОБНОВЛЯЕМ ЗАГОЛОВОК
         self.clear_project_data()
         self.update_title(None)
-
-        # Строку переключения удалили, теперь командует диалоговое окно!
-
         self.log("\n>>> Создана новая рабочая среда. Загрузите файлы для начала работы.")
 
     def action_open_project(self):
@@ -658,9 +622,9 @@ class MainWindow(QMainWindow):
 
     def load_mrp_file(self, path):
         self.log(f"\n⏳ Открытие проекта {path}...")
-        self.ui.stack.setCurrentWidget(self.ui.page_predef)
 
-        # ОЧИЩАЕМ СЦЕНУ ПЕРЕД ЗАГРУЗКОЙ НОВОГО
+        # Переключаем вкладку (это АВТОМАТИЧЕСКИ загрузит 3D-сцену)
+        self.ui.stack.setCurrentWidget(self.ui.page_predef)
         self.clear_project_data()
 
         try:
@@ -690,8 +654,11 @@ class MainWindow(QMainWindow):
                 self.pick_mode = None
 
             self.add_to_recent(path)
-            self.update_title(os.path.basename(path))  # <-- ОБНОВЛЯЕМ НАЗВАНИЕ ПОСЛЕ ЗАГРУЗКИ
-            self.ui.plotter.reset_camera()
+            self.update_title(os.path.basename(path))
+
+            if self.ui.plotter:
+                self.ui.plotter.reset_camera()
+
             self.log("✅ Проект успешно восстановлен!")
 
         except zipfile.BadZipFile:
@@ -701,55 +668,34 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    # ВАЖНО: в интерфейсе создаются ДВА независимых VTK-виджета (pyvistaqt QtInteractor) -
-    # self.ui.plotter (вкладка предеформации) и self.ui.slicer_plotter (вкладка слайсера).
-    # Чтобы несколько VTK/OpenGL контекстов корректно уживались в одном PySide6-процессе
-    # на Windows, атрибут AA_ShareOpenGLContexts нужно выставить ДО создания QApplication.
-    # Без этого combo PySide6 + VTK (через pyvistaqt) нередко падает с access violation
-    # (Process finished with exit code -1073741819 / 0xC0000005), особенно при переключении
-    # между вкладками или при первой отрисовке второго 3D-виджета.
-    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
-
     app = QApplication(sys.argv)
 
-    # Загружаем картинку для сплеш-скрина
     splash_path = os.path.join(ASSETS_DIR, "splash_screen.jpg")
+    if not os.path.exists(splash_path):
+        splash_path = os.path.join(ASSETS_DIR, "splash_screen.png")
+
     original_pixmap = QPixmap(splash_path)
 
-    # Сжимаем картинку до классического "инженерного" размера (как в SolidWorks)
-    # Qt.SmoothTransformation гарантирует, что текст и сетка не станут пиксельными
-    pixmap = original_pixmap.scaled(600, 350, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-    # Если картинка не найдена, создаем темный фон-заглушку
-    if pixmap.isNull():
+    if original_pixmap.isNull():
         pixmap = QPixmap(600, 350)
         pixmap.fill(QColor("#2b2b2b"))
+    else:
+        pixmap = original_pixmap.scaled(600, 350, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-    # Создаем и показываем сплеш-скрин
     splash = QSplashScreen(pixmap, Qt.WindowStaysOnTopHint)
     splash.show()
 
-    # Настраиваем шрифт для текста загрузки
     font = QFont("Segoe UI", 10)
     splash.setFont(font)
-
-    # Имитируем процесс загрузки (чтобы текст успел отрисоваться)
     splash.showMessage("Инициализация ядра 3D-графики...", Qt.AlignBottom | Qt.AlignCenter, QColor("#FFFFFF"))
     app.processEvents()
 
-    # --- Создание главного окна ---
-    # (В этот момент программа "задумывается", загружая UI и PyVista)
-    print("[DEBUG] Перед window = MainWindow()...", flush=True)
     window = MainWindow()
-    print("[DEBUG] window = MainWindow() завершен успешно.", flush=True)
 
     splash.showMessage("Загрузка компонентов интерфейса...", Qt.AlignBottom | Qt.AlignCenter, QColor("#FFFFFF"))
     app.processEvents()
-
-    # Небольшая пауза, чтобы пользователь успел увидеть логотип (можно убрать)
     time.sleep(1.0)
 
-    # Показываем основное окно и закрываем загрузочный экран
     window.show()
     splash.finish(window)
 

@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
 
+
 class Ui_MainWindow(object):
     """Класс, который отвечает ТОЛЬКО за внешний вид программы (кнопки, цвета, ползунки)"""
 
@@ -23,7 +24,7 @@ class Ui_MainWindow(object):
             "Scan": "#d3d3d3",
             "Result": "#2ca02c"
         }
-        self.ribbon_btns = {}  # Словарь для кнопок ленты слайсера
+        self.ribbon_btns = {}
 
         # === БАЗОВЫЕ НАСТРОЙКИ ОКНА ===
         main_window.setWindowTitle("DeWarp Enterprise V6.1")
@@ -50,7 +51,7 @@ class Ui_MainWindow(object):
         self.title_layout = QHBoxLayout(self.title_bar)
         self.title_layout.setContentsMargins(5, 0, 0, 0)
 
-        # --- КНОПКА МЕНЮ (GOM Style) ---
+        # --- КНОПКА МЕНЮ ---
         self.menu_btn = QToolButton()
         self.menu_btn.setText(" ≡ Меню ")
         self.menu_btn.setCursor(Qt.PointingHandCursor)
@@ -68,7 +69,6 @@ class Ui_MainWindow(object):
             QMenu::item:selected { background-color: #b31b1b; }
         """)
 
-        # Создаем действия (Экраны)
         action_start = QAction("🏠 Старт", main_window)
         action_slicer = QAction("🔪 Слайсер", main_window)
         action_predef = QAction("🕸 Предеформация", main_window)
@@ -79,14 +79,11 @@ class Ui_MainWindow(object):
         self.menu_btn.setMenu(self.dropdown_menu)
         self.title_layout.addWidget(self.menu_btn)
 
-        # --- ТУЛБАР (Иконки и Лого) ---
+        # --- ТУЛБАР ---
         self.toolbar = QToolBar()
         self.toolbar.setStyleSheet("border: none;")
 
-        # Вшиваем логотип
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-
-        # Ищем png, если нет - берем ico или jpg
         logo_path = os.path.join(base_path, "assets", "logo.png")
         if not os.path.exists(logo_path):
             logo_path = os.path.join(base_path, "assets", "logo.ico")
@@ -95,7 +92,6 @@ class Ui_MainWindow(object):
         main_window.setWindowIcon(QIcon(logo_pixmap))
 
         self.logo_label = QLabel()
-        # ЗАЩИТА: Масштабируем только если картинка реально загрузилась
         if not logo_pixmap.isNull():
             self.logo_label.setPixmap(logo_pixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self.logo_label.setStyleSheet("padding-left: 10px; padding-right: 20px;")
@@ -142,91 +138,67 @@ class Ui_MainWindow(object):
         self.base_layout.addWidget(self.stack)
 
         # Создаем экраны
-        print("[DEBUG] -> init_start_page()", flush=True)
         self.page_start = self.init_start_page()
-        print("[DEBUG] <- init_start_page() OK", flush=True)
-
-        print("[DEBUG] -> init_slicer_page() (создаст slicer_plotter)", flush=True)
         self.page_slicer = self.init_slicer_page()
-        print("[DEBUG] <- init_slicer_page() OK", flush=True)
-
-        print("[DEBUG] -> init_deformation_page() (создаст plotter)", flush=True)
         self.page_predef = self.init_deformation_page()
-        print("[DEBUG] <- init_deformation_page() OK", flush=True)
-
-        print("[DEBUG] -> create_mockup_page (inspect)", flush=True)
         self.page_inspect = self.create_mockup_page("Зона инспектирования (в разработке...)")
-        print("[DEBUG] -> create_mockup_page (report)", flush=True)
         self.page_report = self.create_mockup_page("Отчеты (в разработке...)")
-        print("[DEBUG] -> init_recent_page()", flush=True)
         self.page_recent = self.init_recent_page()
-        print("[DEBUG] <- все страницы созданы OK", flush=True)
 
-        print("[DEBUG] -> stack.addWidget(page_start)", flush=True)
         self.stack.addWidget(self.page_start)
-        print("[DEBUG] -> stack.addWidget(page_slicer) [содержит slicer_plotter]", flush=True)
         self.stack.addWidget(self.page_slicer)
-        print("[DEBUG] -> stack.addWidget(page_predef) [содержит plotter]", flush=True)
         self.stack.addWidget(self.page_predef)
-        print("[DEBUG] -> stack.addWidget(page_inspect)", flush=True)
         self.stack.addWidget(self.page_inspect)
-        print("[DEBUG] -> stack.addWidget(page_report)", flush=True)
         self.stack.addWidget(self.page_report)
-        print("[DEBUG] -> stack.addWidget(page_recent)", flush=True)
         self.stack.addWidget(self.page_recent)
-        print("[DEBUG] <- все addWidget OK", flush=True)
 
-        # Ленивое создание VTK-сцены слайсера при первом реальном переходе на вкладку
-        # (см. _ensure_slicer_plotter) - это и есть исправление краха 0xC0000005.
+        # ЛЕНИВАЯ ИНИЦИАЛИЗАЦИЯ 3D-СЦЕН: Сработает только при переходе на нужную вкладку
         self.stack.currentChanged.connect(self._on_stack_current_changed)
 
-        # Подключаем меню к переключению зон
-        print("[DEBUG] -> connect actions (menu)", flush=True)
+        # Подключаем меню
         action_start.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_start))
         action_slicer.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_slicer))
         action_predef.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_predef))
         action_inspect.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_inspect))
         action_report.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_report))
-        print("[DEBUG] <- connect actions OK", flush=True)
 
-        # Подключаем кнопку "Новый проект" ---
-        print("[DEBUG] -> connect btn_new_project", flush=True)
         self.btn_new_project.clicked.connect(self.show_new_project_dialog)
-        print("[DEBUG] <- connect btn_new_project OK", flush=True)
 
-        # Открываем "Старт" по умолчанию при запуске
-        print("[DEBUG] -> stack.setCurrentWidget(page_start)", flush=True)
+        # Стартовая страница по умолчанию
         self.stack.setCurrentWidget(self.page_start)
-        print("[DEBUG] <- setupUi ПОЛНОСТЬЮ завершен OK", flush=True)
 
     def _ensure_slicer_plotter(self):
-        """Лениво создает VTK-сцену слайсера при первом реальном открытии вкладки.
-
-        Создание отложено сюда специально: одновременное создание двух VTK/OpenGL-сцен
-        синхронно в setupUi() (до первого show()/цикла отрисовки) роняло процесс с
-        ошибкой доступа 0xC0000005. К моменту, когда пользователь реально переключится
-        на вкладку "Слайсер", главное окно и его первая сцена (self.plotter) уже
-        отрисовались хотя бы раз, и создание второго GL-контекста безопасно.
-        """
+        """Лениво создает VTK-сцену слайсера"""
         if self.slicer_plotter is not None:
             return
         self.slicer_plotter = QtInteractor(self._slicer_center_container)
         self.slicer_plotter.setCursor(Qt.ArrowCursor)
         self.slicer_plotter.set_background('white')
         self.slicer_plotter.add_axes()
+        self.slicer_plotter.winId()  # Заставляем Qt выделить память до скрытия
         self._slicer_center_layout.insertWidget(0, self.slicer_plotter)
 
+    def _ensure_def_plotter(self):
+        """Лениво создает VTK-сцену предеформации"""
+        if self.plotter is not None:
+            return
+        self.plotter = QtInteractor(self._def_center_container)
+        self.plotter.setCursor(Qt.ArrowCursor)
+        self.plotter.set_background('white')
+        self.plotter.add_axes()
+        self.plotter.winId()  # Заставляем Qt выделить память до скрытия
+        self._def_center_layout.addWidget(self.plotter)
+
     def _on_stack_current_changed(self, index):
-        """Триггерит ленивое создание сцены слайсера при переходе на его вкладку."""
+        """Триггерит создание сцен при реальном переходе пользователя на вкладку"""
         if self.stack.widget(index) is self.page_slicer:
             self._ensure_slicer_plotter()
+        elif self.stack.widget(index) is self.page_predef:
+            self._ensure_def_plotter()
 
     def show_new_project_dialog(self, checked=False):
-        """Открывает диалог выбора и переключает на нужный экран"""
         dialog = DialogNewProject()
         if dialog.exec():
-            print(f"DEBUG: Выбрана среда -> {dialog.selected_mode}")  # Будет видно в консоли PyCharm
-
             if dialog.selected_mode == "slicer":
                 self.stack.setCurrentWidget(self.page_slicer)
             elif dialog.selected_mode == "predef":
@@ -241,32 +213,24 @@ class Ui_MainWindow(object):
     # =========================================================
 
     def init_start_page(self):
-        """Интерфейс стартовой страницы в стиле GOM Inspect"""
         page = QWidget()
-        # Светло-серый фон как в GOM, чтобы белые кнопки выделялись
         page.setStyleSheet("background-color: #f4f4f4;")
-
         main_layout = QVBoxLayout(page)
         main_layout.setAlignment(Qt.AlignCenter)
 
-        # Заголовок с логотипом
         title_layout = QHBoxLayout()
         title_layout.setAlignment(Qt.AlignCenter)
 
-        # Декодируем и загружаем наш логотип
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-
         logo_path = os.path.join(base_path, "assets", "logo.png")
         if not os.path.exists(logo_path):
             logo_path = os.path.join(base_path, "assets", "logo.ico")
 
         logo_pixmap = QPixmap(logo_path)
-
         lbl_icon = QLabel()
-        # ЗАЩИТА ОТ КРАША
         if not logo_pixmap.isNull():
             lbl_icon.setPixmap(logo_pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        lbl_icon.setStyleSheet("padding-right: 10px;")  # Небольшой отступ до текста
+        lbl_icon.setStyleSheet("padding-right: 10px;")
 
         lbl_text = QLabel("Meshropractor")
         lbl_text.setStyleSheet("font-size: 24px; color: #333; font-weight: bold;")
@@ -275,14 +239,12 @@ class Ui_MainWindow(object):
         title_layout.addWidget(lbl_text)
 
         main_layout.addLayout(title_layout)
-        main_layout.addSpacing(30)  # Отступ между заголовком и кнопками
+        main_layout.addSpacing(30)
 
-        # Сетка для кнопок
         grid = QGridLayout()
         grid.setAlignment(Qt.AlignCenter)
         grid.setSpacing(20)
 
-        # Создаем 3 кнопки с помощью вспомогательной функции
         self.btn_new_project = self.create_big_button("📄", "Новый проект")
         self.btn_open_project = self.create_big_button("📂", "Открыть проект")
         self.btn_recent_projects = self.create_big_button("🕒", "Недавно использованные\nпроекты")
@@ -295,19 +257,16 @@ class Ui_MainWindow(object):
         return page
 
     def create_big_button(self, icon_text, title):
-        """Создает большую квадратную кнопку в стиле GOM"""
         btn = QPushButton()
         btn.setFixedSize(260, 200)
         btn.setCursor(Qt.PointingHandCursor)
 
-        # Внутренний Layout для кнопки, чтобы расположить иконку над текстом
         layout = QVBoxLayout(btn)
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(15)
 
         icon_lbl = QLabel(icon_text)
         icon_lbl.setAlignment(Qt.AlignCenter)
-        # Прозрачный фон, чтобы не перекрывать эффекты кнопки
         icon_lbl.setStyleSheet("font-size: 70px; color: #777; background: transparent; border: none;")
 
         text_lbl = QLabel(title)
@@ -317,22 +276,13 @@ class Ui_MainWindow(object):
         layout.addWidget(icon_lbl)
         layout.addWidget(text_lbl)
 
-        # Стили самой кнопки (белый фон, серая рамка, при наведении - красная рамка)
         btn.setStyleSheet("""
-            QPushButton {
-                background-color: white;
-                border: 1px solid #cccccc;
-                border-radius: 2px;
-            }
-            QPushButton:hover {
-                border: 2px solid #b31b1b;
-                background-color: #fafafa;
-            }
+            QPushButton { background-color: white; border: 1px solid #cccccc; border-radius: 2px; }
+            QPushButton:hover { border: 2px solid #b31b1b; background-color: #fafafa; }
         """)
         return btn
 
     def create_mockup_page(self, title_text):
-        """Заглушка для пустых зон"""
         page = QWidget()
         layout = QVBoxLayout(page)
         label = QLabel(title_text)
@@ -342,7 +292,6 @@ class Ui_MainWindow(object):
         return page
 
     def create_magics_left_panel(self):
-        """Создает левую мега-панель слайсера (Отображение, Детали, Заметки, Измерения)"""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background-color: #2b2b2b; }")
@@ -352,7 +301,6 @@ class Ui_MainWindow(object):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        # Единый темный стиль для всех блоков (имитация сворачиваемых панелей Magics)
         dark_style = """
             QGroupBox { border: 1px solid #444; margin-top: 20px; font-weight: bold; color: #E0E0E0; background-color: #2b2b2b; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; top: -10px; }
@@ -365,49 +313,37 @@ class Ui_MainWindow(object):
             QPushButton:hover { background-color: #555; border: 1px solid #777; }
         """
 
-        # --- 1. Отображение ---
         grp_disp = QGroupBox("▼ Отображение")
         grp_disp.setStyleSheet(dark_style)
         lo_disp = QVBoxLayout(grp_disp)
         lo_disp.setContentsMargins(5, 15, 5, 5)
-
         tabs_disp = QTabWidget()
         tab_sec = QWidget()
         lo_sec = QVBoxLayout(tab_sec)
-
-        # Таблица сечений
         tbl_sec = QTableWidget(5, 6)
         tbl_sec.setHorizontalHeaderLabels(["Активно", "Тип", "Отсечь", "Цвет", "Позиция", "Шаг"])
         tbl_sec.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         tbl_sec.verticalHeader().setVisible(False)
         tbl_sec.setFixedHeight(120)
         lo_sec.addWidget(tbl_sec)
-
-        # Кнопки и ползунок под таблицей
         h_sec = QHBoxLayout()
         h_sec.addWidget(QPushButton("Указать"))
         h_sec.addWidget(QPushButton("Выровнять"))
-        btn_exp = QPushButton("Экспорт ▾")
-        h_sec.addWidget(btn_exp)
-        sld_sec = QSlider(Qt.Horizontal)
-        h_sec.addWidget(sld_sec)
+        h_sec.addWidget(QPushButton("Экспорт ▾"))
+        h_sec.addWidget(QSlider(Qt.Horizontal))
         lo_sec.addLayout(h_sec)
-
         tabs_disp.addTab(tab_sec, "Сечения")
         tabs_disp.addTab(QWidget(), "Срезы")
         lo_disp.addWidget(tabs_disp)
         layout.addWidget(grp_disp)
 
-        # --- 2. Детали ---
         grp_parts = QGroupBox("▼ Детали")
         grp_parts.setStyleSheet(dark_style)
         lo_parts = QVBoxLayout(grp_parts)
         lo_parts.setContentsMargins(5, 15, 5, 5)
-
         tabs_parts = QTabWidget()
         tab_list = QWidget()
         lo_list = QVBoxLayout(tab_list)
-
         h_list_top = QHBoxLayout()
         cb_plat = QComboBox()
         cb_plat.addItem("M2_220x220_Magics")
@@ -415,7 +351,6 @@ class Ui_MainWindow(object):
         h_list_top.addWidget(cb_plat, stretch=1)
         h_list_top.addWidget(QLabel("Кол-во деталей: 1"))
         lo_list.addLayout(h_list_top)
-
         tbl_parts = QTableWidget(1, 8)
         tbl_parts.setHorizontalHeaderLabels(
             ["#", "Выбранные", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
@@ -423,10 +358,7 @@ class Ui_MainWindow(object):
         tbl_parts.verticalHeader().setVisible(False)
         tbl_parts.setFixedHeight(100)
         lo_list.addWidget(tbl_parts)
-
-        # Имитация мелких тулбарных иконок
         lo_list.addWidget(QLabel("🔧 👁 📋 ❌ 🔄 (Инструменты работы с деталью)"))
-
         tabs_parts.addTab(tab_list, "Список деталей")
         tabs_parts.addTab(QWidget(), "Информация о детали")
         tabs_parts.addTab(QWidget(), "Исправление деталей - инфо")
@@ -435,7 +367,6 @@ class Ui_MainWindow(object):
         lo_parts.addWidget(tabs_parts)
         layout.addWidget(grp_parts)
 
-        # --- 3. Заметки ---
         grp_notes = QGroupBox("▼ Заметки")
         grp_notes.setStyleSheet(dark_style)
         lo_notes = QVBoxLayout(grp_notes)
@@ -448,7 +379,6 @@ class Ui_MainWindow(object):
         lo_notes.addWidget(tabs_notes)
         layout.addWidget(grp_notes)
 
-        # --- 4. Измерения ---
         grp_meas = QGroupBox("▼ Измерения")
         grp_meas.setStyleSheet(dark_style)
         lo_meas = QVBoxLayout(grp_meas)
@@ -456,19 +386,16 @@ class Ui_MainWindow(object):
         tabs_meas = QTabWidget()
         tab_dist = QWidget()
         lo_dist = QVBoxLayout(tab_dist)
-
         lo_dist.addWidget(QLabel("📏 🟢 🟩 (Тулбар измерений)"))
         info_meas = QGroupBox("Информация о измерениях")
         info_meas.setFixedHeight(60)
         lo_dist.addWidget(info_meas)
         lo_dist.addWidget(QCheckBox("Скрыто"))
-
         h_meas_btn = QHBoxLayout()
         h_meas_btn.addWidget(QPushButton("Выбрать"))
         h_meas_btn.addWidget(QPushButton("Очистить измерения"))
         h_meas_btn.addWidget(QPushButton("Настройки привязки"))
         lo_dist.addLayout(h_meas_btn)
-
         tabs_meas.addTab(tab_dist, "Расстояние")
         tabs_meas.addTab(QWidget(), "Окружность")
         tabs_meas.addTab(QWidget(), "Угол")
@@ -478,7 +405,6 @@ class Ui_MainWindow(object):
         lo_meas.addWidget(tabs_meas)
         layout.addWidget(grp_meas)
 
-        # --- 5. Исправления деталей ---
         grp_fix = QGroupBox("▼ Исправления деталей")
         grp_fix.setStyleSheet(dark_style)
         lo_fix = QVBoxLayout(grp_fix)
@@ -499,39 +425,21 @@ class Ui_MainWindow(object):
         return scroll
 
     def init_slicer_page(self):
-        """Интерфейс зоны Слайсера в стиле Magics (Использование \n для переноса строк на кнопках)"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # --- 1. ВЕРХНЯЯ ЛЕНТА ИНСТРУМЕНТОВ ---
         self.magics_ribbon = QTabWidget()
         self.magics_ribbon.setFixedHeight(95)
         self.magics_ribbon.setStyleSheet("""
-            QTabWidget::pane { 
-                border-top: 1px solid #444444; 
-                background-color: #2b2b2b; 
-            }
-            QTabBar::tab { 
-                background-color: #222222; 
-                color: #aaaaaa; 
-                padding: 8px 15px; 
-                font-weight: bold; 
-                border: none;
-            }
-            QTabBar::tab:selected { 
-                background-color: #2b2b2b; 
-                color: #ffffff; 
-                border-bottom: 2px solid #b31b1b; 
-            }
-            QTabBar::tab:hover { 
-                color: #ffffff; 
-                background-color: #333333; 
-            }
+            QTabWidget::pane { border-top: 1px solid #444444; background-color: #2b2b2b; }
+            QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 8px 15px; font-weight: bold; border: none; }
+            QTabBar::tab:selected { background-color: #2b2b2b; color: #ffffff; border-bottom: 2px solid #b31b1b; }
+            QTabBar::tab:hover { color: #ffffff; background-color: #333333; }
         """)
 
-        # Используем \n для аккуратного переноса длинных названий на вторую строку
+        # Полностью восстановленная лента со всеми кнопками!
         self.magics_ribbon.addTab(
             self.create_ribbon_tab(["Создать", "Дублировать", "Пакетное\nдублирование"], "Создание"), "ИНСТРУМЕНТЫ")
         self.magics_ribbon.addTab(
@@ -547,8 +455,7 @@ class Ui_MainWindow(object):
                                   "ПОДДЕРЖКИ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Heatmap", "Сравнение", "Мин/Макс\nтолщины"], "Контроль"),
                                   "АНАЛИЗ И ОТЧЕТЫ")
-        self.magics_ribbon.addTab(
-            self.create_ribbon_tab(["Создание срезов\nConcept Laser"], "Concept Laser"), "СРЕЗЫ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Создание срезов\nConcept Laser"], "Concept Laser"), "СРЕЗЫ")
         self.magics_ribbon.addTab(
             self.create_ribbon_tab(["Цвет деталей", "Прозрачность", "Отображение\nсетки"], "Визуализация"),
             "ОТОБРАЖЕНИЕ")
@@ -557,55 +464,35 @@ class Ui_MainWindow(object):
 
         layout.addWidget(self.magics_ribbon)
 
-        # --- 2. ЦЕНТРАЛЬНЫЙ БЛОК ---
         slicer_splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(slicer_splitter)
 
-        # Левая панель: Мега-панель Magics
         slicer_left_panel = self.create_magics_left_panel()
 
-        # Центральная зона: 3D Сцена + Вкладки сцен снизу
-        center_container = QWidget()
-        center_layout = QVBoxLayout(center_container)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(0)
-
-        # ВАЖНО: НЕ создаем QtInteractor (VTK-сцену) здесь!
-        # Диагностика показала: процесс падает с 0xC0000005 ровно в момент, когда ВТОРАЯ
-        # живая VTK/OpenGL-сцена (эта) добавляется в общую иерархию окна, пока первая
-        # (self.plotter на вкладке Предеформации) уже там - т.е. при одновременном
-        # создании двух GL-контекстов подряд, еще до первого цикла отрисовки/event loop.
-        # Вкладка "Слайсер" пока и так не функциональна (слайсинг - заглушка), поэтому
-        # сцену создаем ЛЕНИВО: только при первом реальном переходе пользователя на эту
-        # вкладку (см. _ensure_slicer_plotter / stack.currentChanged ниже в setupUi).
+        # БАЗА ДЛЯ ЛЕНИВОГО СОЗДАНИЯ СЦЕНЫ
         self.slicer_plotter = None
-        self._slicer_center_container = center_container
-        self._slicer_center_layout = center_layout
+        self._slicer_center_container = QWidget()
+        self._slicer_center_layout = QVBoxLayout(self._slicer_center_container)
+        self._slicer_center_layout.setContentsMargins(0, 0, 0, 0)
+        self._slicer_center_layout.setSpacing(0)
 
-        # ТЕМНЫЕ вкладки переключения сценок снизу
         self.scene_tabs = QTabWidget()
         self.scene_tabs.setFixedHeight(32)
         self.scene_tabs.setStyleSheet("""
             QTabWidget::pane { border: none; background-color: #2b2b2b; }
             QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 4px 15px; font-size: 11px; border: 1px solid #3d3d3d; }
             QTabBar::tab:selected { background-color: #2b2b2b; color: #ffffff; font-weight: bold; border-bottom: 2px solid #b31b1b; }
-            QTabBar::tab:hover { background-color: #333333; color: #ffffff; }
         """)
-        self.scene_tabs.addTab(QWidget(), "🖥 Модельная сцена (В воздухе)")
-        self.scene_tabs.addTab(QWidget(), "📦 M2_220x220 (Concept Laser)")
-        self.scene_tabs.addTab(QWidget(), "📦 mlab_90x90 (Concept Laser)")
-        self.scene_tabs.addTab(QWidget(), "📦 M2_245x245 (Concept Laser)")
+        self.scene_tabs.addTab(QWidget(), "🖥 Модельная сцена")
+        self.scene_tabs.addTab(QWidget(), "📦 M2_220x220")
+        self._slicer_center_layout.addWidget(self.scene_tabs)
 
-        self.scene_tabs.currentChanged.connect(self.on_scene_tab_changed)
-        center_layout.addWidget(self.scene_tabs)
-
-        # Правая панель: Шторка параметров
         slicer_right_panel = QWidget()
         slicer_right_layout = QVBoxLayout(slicer_right_panel)
         slicer_right_layout.setContentsMargins(5, 5, 5, 5)
 
         slicer_splitter.addWidget(slicer_left_panel)
-        slicer_splitter.addWidget(center_container)
+        slicer_splitter.addWidget(self._slicer_center_container)
         slicer_splitter.addWidget(slicer_right_panel)
         slicer_splitter.setSizes([450, 1150, 0])
 
@@ -616,18 +503,16 @@ class Ui_MainWindow(object):
             QTabWidget::pane { border: 1px solid #555; }
             QWidget { color: #E0E0E0; } 
         """)
-
         tab_preview = QWidget()
         tpr_layout = QVBoxLayout(tab_preview)
         tpr_layout.addWidget(QLabel("Просмотр срезов .CLS", styleSheet="color: white; font-weight: bold;"))
         tpr_layout.addStretch()
         self.slicer_tabs.addTab(tab_preview, "Срезы")
-
         slicer_right_layout.addWidget(self.slicer_tabs)
+
         return page
 
     def create_ribbon_tab(self, button_names, category_name):
-        """Создает панель с поддержкой переноса текста через \n"""
         container = QWidget()
         container.setStyleSheet("background-color: #2b2b2b;")
         h_layout = QHBoxLayout(container)
@@ -639,50 +524,22 @@ class Ui_MainWindow(object):
             btn = QPushButton(name)
             btn.setFixedSize(115, 60)
             btn.setCursor(Qt.PointingHandCursor)
-
-            # Qt автоматически переносит строки по символу \n и центрирует текст на кнопке
             btn.setStyleSheet("""
-                QPushButton {
-                    background-color: transparent;
-                    color: #e0e0e0;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 11px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #383838;
-                    border: 1px solid #666666;
-                    color: #ffffff;
-                }
-                QPushButton:pressed {
-                    background-color: #222222;
-                    border: 1px solid #b31b1b;
-                }
+                QPushButton { background-color: transparent; color: #e0e0e0; border: none; border-radius: 4px; font-size: 11px; font-weight: bold; }
+                QPushButton:hover { background-color: #383838; border: 1px solid #666666; color: #ffffff; }
+                QPushButton:pressed { background-color: #222222; border: 1px solid #b31b1b; }
             """)
-
             clean_name = name.replace('\n', ' ')
             self.ribbon_btns[clean_name] = btn
-
             h_layout.addWidget(btn)
 
         h_layout.addStretch()
         return container
 
     def on_scene_tab_changed(self, index):
-        """Логика смены сцены в зависимости от выбранной платформы"""
-        # Индексы: 0 - Модельная, 1 - M2_220x220, 2 - Mlab_90x90, 3 - M2_245x245
-        if index == 0:
-            print("Переключено на: Модельная сцена (без платформы)")
-        elif index == 1:
-            print("Переключено на платформу: M2 220x220 мм")
-        elif index == 2:
-            print("Переключено на платформу: Mlab 90x90 мм")
-        elif index == 3:
-            print("Переключено на платформу: M2 245x245 мм")
+        pass
 
     def init_deformation_page(self):
-        """Интерфейс зоны Предеформации (ваш оригинальный код)"""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -690,7 +547,7 @@ class Ui_MainWindow(object):
         self.main_splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(self.main_splitter)
 
-        # --- Левая панель (Дерево) ---
+        # --- Левая панель ---
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
         self.left_layout.setContentsMargins(5, 5, 5, 5)
@@ -705,27 +562,24 @@ class Ui_MainWindow(object):
         self.tree.expandAll()
         self.left_layout.addWidget(self.tree)
 
-        # --- Средняя панель (3D) ---
-        print("[DEBUG] Перед созданием plotter (QtInteractor)...", flush=True)
-        self.plotter = QtInteractor(page)
-        print("[DEBUG] plotter создан успешно.", flush=True)
-        self.plotter.setCursor(Qt.ArrowCursor)
-        self.plotter.set_background('white')
-        self.plotter.add_axes()
+        # --- Средняя панель (БАЗА ДЛЯ ЛЕНИВОЙ ЗАГРУЗКИ) ---
+        self.plotter = None
+        self._def_center_container = QWidget()
+        self._def_center_layout = QVBoxLayout(self._def_center_container)
+        self._def_center_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Правая панель (Настройки) ---
+        # --- Правая панель ---
         self.right_panel = QWidget()
         self.right_layout = QVBoxLayout(self.right_panel)
         self.right_layout.setContentsMargins(5, 5, 5, 5)
 
         self.main_splitter.addWidget(self.left_panel)
-        self.main_splitter.addWidget(self.plotter)
+        self.main_splitter.addWidget(self._def_center_container)
         self.main_splitter.addWidget(self.right_panel)
         self.main_splitter.setSizes([250, 950, 400])
 
         # === ВКЛАДКИ НА ПРАВОЙ ПАНЕЛИ ===
         self.tabs = QTabWidget()
-        # Применяем черный текст ТОЛЬКО к верхним кнопкам вкладок, а внутренности делаем белыми
         self.tabs.setStyleSheet("""
                     QTabBar::tab { color: black; background-color: #cccccc; padding: 5px 10px; }
                     QTabBar::tab:selected { background-color: #ffffff; font-weight: bold; }
@@ -815,8 +669,8 @@ class Ui_MainWindow(object):
         self.heat_group.setLayout(self.heat_layout)
         self.right_layout.addWidget(self.heat_group, stretch=0)
 
+        return page
 
-    # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ГЕНЕРАЦИИ ИНТЕРФЕЙСА ---
     def create_color_button(self, key):
         btn = QPushButton()
         btn.setFixedSize(24, 24)
@@ -826,7 +680,7 @@ class Ui_MainWindow(object):
 
     def add_slider(self, layout, text, vmin, vmax, vdef, step, name, divider=1.0):
         lbl = QLabel(f"{text}: {vdef / divider}")
-        lbl.setStyleSheet("color: #E0E0E0; font-weight: bold;")  # Явный светлый цвет
+        lbl.setStyleSheet("color: #E0E0E0; font-weight: bold;")
         sld = QSlider(Qt.Horizontal)
         sld.setMinimum(vmin)
         sld.setMaximum(vmax)
@@ -874,11 +728,8 @@ class Ui_MainWindow(object):
 
     def initCompTab(self):
         l = QVBoxLayout(self.tab_comp)
-
-        # Создаем менеджер экранов для вкладки (Настройки <-> Прогресс-бар)
         self.comp_stack = QStackedWidget()
 
-        # --- СТРАНИЦА 1: Настройки ---
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         set_widget = QWidget()
@@ -903,9 +754,8 @@ class Ui_MainWindow(object):
         set_layout.addWidget(self.chk_anchor)
 
         scroll.setWidget(set_widget)
-        self.comp_stack.addWidget(scroll)  # Добавляем скролл с настройками на индекс 0
+        self.comp_stack.addWidget(scroll)
 
-        # --- СТРАНИЦА 2: Прогресс-бар ---
         self.progress_widget = QWidget()
         prog_layout = QVBoxLayout(self.progress_widget)
         prog_layout.setAlignment(Qt.AlignCenter)
@@ -920,37 +770,27 @@ class Ui_MainWindow(object):
         self.comp_progress_bar.setFixedSize(320, 35)
         self.comp_progress_bar.setTextVisible(True)
         self.comp_progress_bar.setStyleSheet("""
-                    QProgressBar {
-                        border: 2px solid #555; border-radius: 5px; text-align: center;
-                        color: white; font-weight: bold; font-size: 14px; background-color: #333;
-                    }
+                    QProgressBar { border: 2px solid #555; border-radius: 5px; text-align: center; color: white; font-weight: bold; font-size: 14px; background-color: #333; }
                     QProgressBar::chunk { background-color: #c0392b; border-radius: 3px; }
                 """)
 
-        # === ДОБАВЛЯЕМ КНОПКУ ОТМЕНЫ ===
         self.btn_cancel_comp = QPushButton("❌ Отменить расчет")
         self.btn_cancel_comp.setFixedSize(180, 35)
         self.btn_cancel_comp.setCursor(Qt.PointingHandCursor)
         self.btn_cancel_comp.setStyleSheet("""
-                    QPushButton {
-                        background-color: #444; color: white; border: 1px solid #555; 
-                        border-radius: 4px; font-weight: bold; font-size: 13px;
-                    }
+                    QPushButton { background-color: #444; color: white; border: 1px solid #555; border-radius: 4px; font-weight: bold; font-size: 13px; }
                     QPushButton:hover { background-color: #c0392b; border: 1px solid #ff5555; }
                 """)
 
         prog_layout.addWidget(self.lbl_progress_status)
         prog_layout.addSpacing(20)
         prog_layout.addWidget(self.comp_progress_bar)
-        prog_layout.addSpacing(15)  # Отступ между баром и кнопкой
+        prog_layout.addSpacing(15)
         prog_layout.addWidget(self.btn_cancel_comp, 0, Qt.AlignCenter)
 
-        self.comp_stack.addWidget(self.progress_widget)  # Добавляем прогресс на индекс 1
-
-        # Добавляем StackedWidget на вкладку
+        self.comp_stack.addWidget(self.progress_widget)
         l.addWidget(self.comp_stack)
 
-        # --- КНОПКИ ЗАПУСКА И СОХРАНЕНИЯ (Всегда видны внизу) ---
         self.btn_run_comp = QPushButton("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
         self.btn_run_comp.setStyleSheet(
             "height: 50px; background-color: #c0392b; color: white; font-weight: bold; font-size: 14px;")
@@ -970,11 +810,8 @@ class Ui_MainWindow(object):
         lbl_story.setStyleSheet("font-size: 14px; font-style: italic; color: #E0E0E0; margin-bottom: 10px;")
         l.addWidget(lbl_story)
 
-        # Вычисляем путь к картинке, используя os (не забудь добавить import os в начало файла)
-        import os
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
         img_path = os.path.join(base_path, "assets", "f.jpeg")
-
         lbl_img = QLabel()
         pixmap = QPixmap(img_path)
 
@@ -994,12 +831,10 @@ class Ui_MainWindow(object):
         l.addWidget(lbl_card)
 
     def init_recent_page(self):
-        """Галерея недавно использованных проектов"""
         page = QWidget()
         page.setStyleSheet("background-color: #f4f4f4;")
         layout = QVBoxLayout(page)
 
-        # Заголовок и кнопка "Назад"
         header_layout = QHBoxLayout()
         self.btn_back_to_start = QPushButton("⬅ Назад")
         self.btn_back_to_start.setFixedSize(120, 40)
@@ -1015,7 +850,6 @@ class Ui_MainWindow(object):
         header_layout.addStretch()
         layout.addLayout(header_layout)
 
-        # Скроллируемая область для сетки проектов
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none; background-color: transparent;")
@@ -1032,14 +866,11 @@ class Ui_MainWindow(object):
 
 
 class DialogExportCLS(QDialog):
-    """Модальное окно параметров экспорта для Concept Laser"""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Concept Laser")
         self.setFixedSize(480, 800)
 
-        # Фирменный темный стиль
         self.setStyleSheet("""
             QDialog { background-color: #2b2b2b; color: #e0e0e0; }
             QGroupBox { border: 1px solid #555; margin-top: 15px; padding-top: 15px; font-weight: bold; color: #ccc; }
@@ -1052,10 +883,8 @@ class DialogExportCLS(QDialog):
             QPushButton:hover { background-color: #555; border: 1px solid #777; }
             QPushButton:pressed { background-color: #b31b1b; }
         """)
-
         main_layout = QVBoxLayout(self)
 
-        # 1. Файлы
         grp_files = QGroupBox("Файлы")
         lo_files = QVBoxLayout(grp_files)
         table_layout = QHBoxLayout()
@@ -1074,7 +903,6 @@ class DialogExportCLS(QDialog):
         lo_files.addWidget(QLineEdit("C:\\Meshropractor\\Export"))
         main_layout.addWidget(grp_files)
 
-        # 2. Пресеты
         grp_preset = QGroupBox("Предустановленный набор параметров")
         lo_preset = QVBoxLayout(grp_preset)
         h_combo = QHBoxLayout()
@@ -1087,7 +915,6 @@ class DialogExportCLS(QDialog):
         lo_preset.addLayout(h_btns)
         main_layout.addWidget(grp_preset)
 
-        # 3. Срезы модели и поддержек
         h_slices = QHBoxLayout()
         grp_mod = QGroupBox("Срезы модели")
         lo_mod = QGridLayout(grp_mod)
@@ -1105,7 +932,6 @@ class DialogExportCLS(QDialog):
         h_slices.addWidget(grp_sup)
         main_layout.addLayout(h_slices)
 
-        # 4. Оболочка-ядро
         grp_core = QGroupBox("Оболочка-ядро")
         lo_core = QVBoxLayout(grp_core)
         h_rad = QHBoxLayout()
@@ -1122,7 +948,6 @@ class DialogExportCLS(QDialog):
         lo_core.addLayout(h_thick)
         main_layout.addWidget(grp_core)
 
-        # 5. Островок (Шахматка)
         grp_isl = QGroupBox("Островок")
         lo_isl = QVBoxLayout(grp_isl)
         lo_isl.addWidget(QCheckBox("Включить островки"))
@@ -1140,14 +965,13 @@ class DialogExportCLS(QDialog):
         lo_isl.addLayout(grid_isl)
         main_layout.addWidget(grp_isl)
 
-        # Кнопки внизу
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         btn_yes = QPushButton("Да")
-        btn_yes.clicked.connect(self.accept)  # Закрывает диалог с успехом
+        btn_yes.clicked.connect(self.accept)
         btn_yes.setFixedWidth(80)
         btn_cancel = QPushButton("Отмена")
-        btn_cancel.clicked.connect(self.reject)  # Закрывает без сохранения
+        btn_cancel.clicked.connect(self.reject)
         btn_cancel.setFixedWidth(80)
         btn_layout.addWidget(btn_yes)
         btn_layout.addWidget(btn_cancel)
@@ -1155,33 +979,19 @@ class DialogExportCLS(QDialog):
 
 
 class DialogNewProject(QDialog):
-    """Окно выбора типа нового проекта"""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Создание нового проекта")
-
-        # Немного увеличим высоту окна под два ряда кнопок
         self.setFixedSize(450, 340)
 
-        # --- УСТАНОВКА ЛОГОТИПА В ЗАГОЛОВОК ---
-        from PySide6.QtGui import QIcon
         base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
         logo_path = os.path.join(base_path, "assets", "logo.png")
         self.setWindowIcon(QIcon(logo_path))
-        # ----------------------------------------
 
-        # Строгий темный стиль окна
         self.setStyleSheet("""
             QDialog { background-color: #2b2b2b; color: white; }
             QLabel { color: #e0e0e0; font-size: 14px; font-weight: bold; }
-            QPushButton { 
-                background-color: #333333; 
-                border: 1px solid #555555; 
-                border-radius: 5px; 
-                color: white; 
-                font-size: 14px; 
-            }
+            QPushButton { background-color: #333333; border: 1px solid #555555; border-radius: 5px; color: white; font-size: 14px; }
             QPushButton:hover { background-color: #444444; border: 1px solid #b31b1b; }
             QPushButton:pressed { background-color: #b31b1b; color: white; }
         """)
@@ -1190,11 +1000,9 @@ class DialogNewProject(QDialog):
         layout.addWidget(QLabel("Выберите рабочую среду для нового проекта:"), 0, Qt.AlignCenter)
         layout.addSpacing(10)
 
-        # Сетка 2x2 для кнопок
         grid = QGridLayout()
         grid.setSpacing(15)
 
-        # Кнопки
         self.btn_slicer = QPushButton("🔪\nСлайсер\n(Подготовка к печати)")
         self.btn_slicer.setFixedSize(190, 110)
         self.btn_slicer.setCursor(Qt.PointingHandCursor)
@@ -1211,7 +1019,6 @@ class DialogNewProject(QDialog):
         self.btn_report.setFixedSize(190, 110)
         self.btn_report.setCursor(Qt.PointingHandCursor)
 
-        # Размещаем кнопки в сетке: строка, столбец
         grid.addWidget(self.btn_slicer, 0, 0)
         grid.addWidget(self.btn_predef, 0, 1)
         grid.addWidget(self.btn_inspect, 1, 0)
@@ -1219,8 +1026,6 @@ class DialogNewProject(QDialog):
 
         layout.addLayout(grid)
 
-        # Логика выбора
-        # Логика выбора (используем lambda для передачи точного имени режима)
         self.selected_mode = None
         self.btn_slicer.clicked.connect(lambda: self.set_mode("slicer"))
         self.btn_predef.clicked.connect(lambda: self.set_mode("predef"))
@@ -1228,6 +1033,5 @@ class DialogNewProject(QDialog):
         self.btn_report.clicked.connect(lambda: self.set_mode("report"))
 
     def set_mode(self, mode):
-        """Универсальная функция сохранения выбора"""
         self.selected_mode = mode
         self.accept()
