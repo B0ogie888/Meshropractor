@@ -110,6 +110,7 @@ class AlignmentThread(QThread):
 class CompensationThread(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(object)
+    progress_signal = Signal(int)  # <--- НОВЫЙ СИГНАЛ ПРОГРЕССА
 
     def __init__(self, cad_mesh, scan_mesh, settings):
         super().__init__()
@@ -127,6 +128,8 @@ class CompensationThread(QThread):
                 return
 
             self.log("\n=== ЗАПУСК ПРЕДЕФОРМАЦИИ (RBF) ===")
+            self.progress_signal.emit(5)  # Старт
+
             cad_mesh, scan_mesh, s = self.cad_mesh, self.scan_mesh, self.settings
 
             # 1. Ремешинг
@@ -135,10 +138,14 @@ class CompensationThread(QThread):
                 v, f = trimesh.remesh.subdivide_to_size(cad_mesh.vertices, cad_mesh.faces, max_edge=s['edge_len'])
                 cad_mesh = trimesh.Trimesh(vertices=v, faces=f)
 
+            self.progress_signal.emit(15)
+
             # 2. Маячки
             self.log(f"2. Установка маячков ({s['points']} шт.)...")
             ctrl_cad_verts, face_indices = trimesh.sample.sample_surface(cad_mesh, s['points'])
             ctrl_cad_normals = np.array(cad_mesh.face_normals[face_indices])
+
+            self.progress_signal.emit(25)
 
             # 3. Raycasting
             self.log("3. Аппаратная трассировка (Open3D Tensor Engine)...")
@@ -161,6 +168,8 @@ class CompensationThread(QThread):
 
             locs_out, ray_idx_out, tri_idx_out = get_hits_o3d(ctrl_cad_verts, ctrl_cad_normals, "Поиск утолщений")
             locs_in, ray_idx_in, tri_idx_in = get_hits_o3d(ctrl_cad_verts, -ctrl_cad_normals, "Поиск усадки")
+
+            self.progress_signal.emit(40)
 
             # 4. Анализ попаданий
             def process_hits(ray_origins, cad_normals, locs, index_ray, index_tri, mesh, strictness):
@@ -201,6 +210,8 @@ class CompensationThread(QThread):
                     final_ctrl_cad.append(ctrl_cad_verts[i])
                     final_error_vectors.append(np.zeros(3))
 
+            self.progress_signal.emit(50)
+
             # 5. Математика RBF
             self.log("4. Расчет RBF-матрицы деформации...")
             if s['neighbors'] > 0:
@@ -211,6 +222,8 @@ class CompensationThread(QThread):
                 self.log("   -> Режим: Глобальный (Максимальная гладкость, требует много ОЗУ!)")
                 rbf = RBFInterpolator(np.array(final_ctrl_cad), np.array(final_error_vectors),
                                       kernel='thin_plate_spline', smoothing=s['smooth'])
+
+            self.progress_signal.emit(60)  # RBF матрица посчитана
 
             # 6. МНОГОПОТОЧНАЯ ДЕФОРМАЦИЯ
             self.log("5. Пакетная деформация (Многопоточный режим)...")
@@ -233,10 +246,15 @@ class CompensationThread(QThread):
                     start_idx, end_idx, result_chunk = future.result()
                     compensated_verts[start_idx:end_idx] = result_chunk
                     completed += 1
-                    self.log(f"   -> Прогресс: {int((completed / total_chunks) * 100)}%", replace=True)
+
+                    # Плавно заполняем прогресс-бар от 60% до 100%
+                    current_progress = 60 + int((completed / total_chunks) * 40)
+                    self.progress_signal.emit(current_progress)
 
             cad_mesh.vertices = compensated_verts
             self.log("\n=== ГОТОВО! МОДЕЛЬ УСПЕШНО ДЕФОРМИРОВАНА ===")
+
+            self.progress_signal.emit(100)
             self.finished_signal.emit(cad_mesh)
 
         except Exception as e:

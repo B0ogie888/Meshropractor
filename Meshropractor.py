@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         # Вкладка 2
         self.ui.btn_run_comp.clicked.connect(self.run_comp)
         self.ui.btn_save.clicked.connect(self.save_result)
+        self.ui.btn_cancel_comp.clicked.connect(self.cancel_comp)
 
         # --- Вкладка Слайсера ---
         # Подключаем единственную кнопку "Экспорт .CLS" к открытию модального окна
@@ -196,7 +197,19 @@ class MainWindow(QMainWindow):
         super().leaveEvent(event)
 
     def closeEvent(self, event):
-        """Корректно закрываем обе 3D-сцены перед выходом"""
+        """Корректно закрываем потоки и 3D-сцены перед выходом"""
+
+        # 1. Жестко останавливаем потоки расчетов, если они еще работают
+        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
+            self.log("Принудительная остановка расчетов...")
+            self.comp_thread.terminate()  # Жестко убиваем поток
+            self.comp_thread.wait()  # Ждем завершения
+
+        if hasattr(self, 'align_thread') and self.align_thread.isRunning():
+            self.align_thread.terminate()
+            self.align_thread.wait()
+
+        # 2. Аккуратно закрываем графические 3D-ядра
         try:
             if hasattr(self, 'ui') and hasattr(self.ui, 'plotter'):
                 self.ui.plotter.close()
@@ -204,19 +217,14 @@ class MainWindow(QMainWindow):
                 self.slicer_plotter.close()
         except Exception:
             pass
+
         event.accept()
 
     # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ЛОГИКИ ===
     def log(self, text, replace=False):
-        if text.startswith("REPLACE_FLAG"):
-            cursor = self.ui.console.textCursor()
-            cursor.movePosition(cursor.End)
-            cursor.select(cursor.LineUnderCursor)
-            cursor.removeSelectedText()
-            cursor.insertText(text.replace("REPLACE_FLAG", ""))
-        else:
-            self.ui.console.append(text)
-        self.ui.console.verticalScrollBar().setValue(self.ui.console.verticalScrollBar().maximum())
+        # Интерфейсной консоли больше нет, отправляем логи в скрытый системный терминал
+        clean_text = text.replace("REPLACE_FLAG", "")
+        print(clean_text)
 
     def pick_color(self, key, btn):
         initial_color = QColor(self.ui.mesh_colors[key])
@@ -429,10 +437,21 @@ class MainWindow(QMainWindow):
         self.ui.chk_view_cad.setChecked(True)
         self.log("Отображение сброшено в базовый режим.")
 
+    def update_progress_safe(self, value):
+        """Безопасный мостик для обновления UI из фонового потока"""
+        if hasattr(self, 'ui') and hasattr(self.ui, 'comp_progress_bar'):
+            self.ui.comp_progress_bar.setValue(value)
+
     def run_comp(self):
         if not self.cad_mesh or not self.scan_mesh: return
+
+        # 1. Меняем настройки на окно с прогресс-баром
+        self.ui.comp_stack.setCurrentIndex(1)
+        self.ui.comp_progress_bar.setValue(0)
+
+        # 2. Блокируем кнопку запуска
         self.ui.btn_run_comp.setEnabled(False)
-        self.ui.btn_run_comp.setText("⏳ ИДЕТ РАСЧЕТ МАТРИЦ...")
+        self.ui.btn_run_comp.setText("⏳ ИДЕТ РАСЧЕТ...")
 
         settings = {
             "points": int(self.ui.sliders["points"][0].value() / self.ui.sliders["points"][1]),
@@ -447,15 +466,37 @@ class MainWindow(QMainWindow):
 
         self.comp_thread = CompensationThread(self.cad_mesh, self.scan_mesh, settings)
         self.comp_thread.log_signal.connect(self.log)
+        self.comp_thread.progress_signal.connect(self.update_progress_safe)
         self.comp_thread.finished_signal.connect(self.on_comp_done)
         self.comp_thread.start()
+
+    def cancel_comp(self):
+        """Мгновенно прерывает расчет и возвращает интерфейс"""
+        # 1. Убиваем процесс, если он запущен
+        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
+            self.log("[!] Расчет принудительно остановлен пользователем.")
+            self.comp_thread.terminate()  # Жесткий стоп математики
+            self.comp_thread.wait()  # Ожидаем завершения очистки памяти
+
+        # 2. Возвращаем интерфейс обратно на настройки
+        self.ui.comp_stack.setCurrentIndex(0)
+
+        # 3. Разблокируем кнопку запуска
+        self.ui.btn_run_comp.setEnabled(True)
+        self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
 
     def on_comp_done(self, result_mesh):
         self.result_mesh = result_mesh
         self.show_mesh("Result", self.result_mesh)
         self.add_tree_item(self.ui.cat_res, "Compensated_Part.stl", "Result")
+
         if self.ui.cat_scan.childCount() > 0:
             self.ui.cat_scan.child(0).setCheckState(0, Qt.Unchecked)
+
+        # 1. Возвращаем ползунки настроек обратно
+        self.ui.comp_stack.setCurrentIndex(0)
+
+        # 2. Разблокируем кнопки
         self.ui.btn_run_comp.setEnabled(True)
         self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
         self.ui.btn_save.setEnabled(True)

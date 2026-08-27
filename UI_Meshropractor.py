@@ -746,14 +746,6 @@ class Ui_MainWindow(object):
         self.heat_group.setLayout(self.heat_layout)
         self.right_layout.addWidget(self.heat_group, stretch=0)
 
-        # === КОНСОЛЬ ===
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setFixedHeight(180)
-        self.console.setStyleSheet("background-color: black; color: #00FF00; font-family: Consolas; font-size: 12px;")
-        self.right_layout.addWidget(self.console, stretch=0)
-
-        return page
 
     # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ГЕНЕРАЦИИ ИНТЕРФЕЙСА ---
     def create_color_button(self, key):
@@ -813,6 +805,11 @@ class Ui_MainWindow(object):
 
     def initCompTab(self):
         l = QVBoxLayout(self.tab_comp)
+
+        # Создаем менеджер экранов для вкладки (Настройки <-> Прогресс-бар)
+        self.comp_stack = QStackedWidget()
+
+        # --- СТРАНИЦА 1: Настройки ---
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         set_widget = QWidget()
@@ -837,8 +834,54 @@ class Ui_MainWindow(object):
         set_layout.addWidget(self.chk_anchor)
 
         scroll.setWidget(set_widget)
-        l.addWidget(scroll)
+        self.comp_stack.addWidget(scroll)  # Добавляем скролл с настройками на индекс 0
 
+        # --- СТРАНИЦА 2: Прогресс-бар ---
+        self.progress_widget = QWidget()
+        prog_layout = QVBoxLayout(self.progress_widget)
+        prog_layout.setAlignment(Qt.AlignCenter)
+
+        self.lbl_progress_status = QLabel("Расчет матрицы предеформации...\nОжидайте завершения.")
+        self.lbl_progress_status.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
+        self.lbl_progress_status.setAlignment(Qt.AlignCenter)
+
+        self.comp_progress_bar = QProgressBar()
+        self.comp_progress_bar.setRange(0, 100)
+        self.comp_progress_bar.setValue(0)
+        self.comp_progress_bar.setFixedSize(320, 35)
+        self.comp_progress_bar.setTextVisible(True)
+        self.comp_progress_bar.setStyleSheet("""
+                    QProgressBar {
+                        border: 2px solid #555; border-radius: 5px; text-align: center;
+                        color: white; font-weight: bold; font-size: 14px; background-color: #333;
+                    }
+                    QProgressBar::chunk { background-color: #c0392b; border-radius: 3px; }
+                """)
+
+        # === ДОБАВЛЯЕМ КНОПКУ ОТМЕНЫ ===
+        self.btn_cancel_comp = QPushButton("❌ Отменить расчет")
+        self.btn_cancel_comp.setFixedSize(180, 35)
+        self.btn_cancel_comp.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel_comp.setStyleSheet("""
+                    QPushButton {
+                        background-color: #444; color: white; border: 1px solid #555; 
+                        border-radius: 4px; font-weight: bold; font-size: 13px;
+                    }
+                    QPushButton:hover { background-color: #c0392b; border: 1px solid #ff5555; }
+                """)
+
+        prog_layout.addWidget(self.lbl_progress_status)
+        prog_layout.addSpacing(20)
+        prog_layout.addWidget(self.comp_progress_bar)
+        prog_layout.addSpacing(15)  # Отступ между баром и кнопкой
+        prog_layout.addWidget(self.btn_cancel_comp, alignment=Qt.AlignCenter)
+
+        self.comp_stack.addWidget(self.progress_widget)  # Добавляем прогресс на индекс 1
+
+        # Добавляем StackedWidget на вкладку
+        l.addWidget(self.comp_stack)
+
+        # --- КНОПКИ ЗАПУСКА И СОХРАНЕНИЯ (Всегда видны внизу) ---
         self.btn_run_comp = QPushButton("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
         self.btn_run_comp.setStyleSheet(
             "height: 50px; background-color: #c0392b; color: white; font-weight: bold; font-size: 14px;")
