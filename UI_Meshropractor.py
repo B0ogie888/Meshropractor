@@ -1,4 +1,7 @@
+# Файл: UI_Meshropractor.py
 import sys
+import os
+
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QSlider, QCheckBox, QGroupBox, QTextEdit,
                                QScrollArea, QTabWidget, QGridLayout, QSplitter,
@@ -8,7 +11,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
-from assets import LOGO_B64
+# from assets import LOGO_B64
 
 
 class Ui_MainWindow(object):
@@ -82,9 +85,10 @@ class Ui_MainWindow(object):
         self.toolbar.setStyleSheet("border: none;")
 
         # Вшиваем логотип
-        logo_bytes = QByteArray.fromBase64(LOGO_B64)
-        logo_pixmap = QPixmap()
-        logo_pixmap.loadFromData(logo_bytes)
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        logo_path = os.path.join(base_path, "assets", "logo.png")
+
+        logo_pixmap = QPixmap(logo_path)
         main_window.setWindowIcon(QIcon(logo_pixmap))
 
         self.logo_label = QLabel()
@@ -175,13 +179,14 @@ class Ui_MainWindow(object):
         title_layout.setAlignment(Qt.AlignCenter)
 
         # Декодируем и загружаем наш логотип
-        logo_bytes = QByteArray.fromBase64(LOGO_B64)
-        logo_pixmap = QPixmap()
-        logo_pixmap.loadFromData(logo_bytes)
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        logo_path = os.path.join(base_path, "assets", "logo.png")  # Укажи точное имя файла
+
+        logo_pixmap = QPixmap(logo_path)
 
         lbl_icon = QLabel()
         # Ставим размер 40x40 пикселей со сглаживанием
-        lbl_icon.setPixmap(logo_pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        lbl_icon.setPixmap(logo_pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         lbl_icon.setStyleSheet("padding-right: 10px;")  # Небольшой отступ до текста
 
         lbl_text = QLabel("Meshropractor")
@@ -835,23 +840,12 @@ class Ui_MainWindow(object):
         lbl_story.setStyleSheet("font-size: 14px; font-style: italic; color: #E0E0E0; margin-bottom: 10px;")
         l.addWidget(lbl_story)
 
-        # --- СПЕЦИАЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОИСКА ПУТИ В .EXE ---
-        import sys
+        # Вычисляем путь к картинке, используя os (не забудь добавить import os в начало файла)
         import os
-        def resource_path(relative_path):
-            """Возвращает правильный путь к файлу при запуске из Python и из .exe"""
-            try:
-                # PyInstaller создает временную папку и хранит путь в _MEIPASS
-                base_path = sys._MEIPASS
-            except Exception:
-                base_path = os.path.abspath(".")
-            return os.path.join(base_path, relative_path)
-
-        # ----------------------------------------------------
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        img_path = os.path.join(base_path, "assets", "f.jpeg")
 
         lbl_img = QLabel()
-        # Используем нашу новую функцию, чтобы найти картинку
-        img_path = resource_path("f.jpeg")
         pixmap = QPixmap(img_path)
 
         if not pixmap.isNull():
@@ -859,6 +853,7 @@ class Ui_MainWindow(object):
         else:
             lbl_img.setText(f"[Картинка не найдена:\n{img_path}]")
             lbl_img.setStyleSheet("color: #ff4444; font-weight: bold;")
+
         lbl_img.setAlignment(Qt.AlignCenter)
         l.addWidget(lbl_img)
 

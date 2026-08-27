@@ -1,5 +1,6 @@
 # Файл: Meshropractor.py
 import sys
+import time
 import numpy as np
 import trimesh
 import zipfile
@@ -7,10 +8,16 @@ import json
 import io
 import os
 
+# Получаем абсолютный путь к папке, где лежит этот скрипт (Meshropractor.py)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Указываем путь к папке с картинками
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+
 # Импорты интерфейса (Добавили QLabel)
-from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, QLabel
+from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, QLabel, QSplashScreen
 from PySide6.QtCore import Qt, QSettings, QSize, QEvent
-from PySide6.QtGui import QColor, QTextCursor, QPixmap, QIcon
+from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon
 
 import pyvista as pv
 
@@ -642,8 +649,46 @@ class MainWindow(QMainWindow):
             self.log(f"[!] Ошибка: {str(e)}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # Загружаем картинку для сплеш-скрина
+    splash_path = os.path.join(ASSETS_DIR, "splash_screen.jpg")
+    original_pixmap = QPixmap(splash_path)
+
+    # Сжимаем картинку до классического "инженерного" размера (как в SolidWorks)
+    # Qt.SmoothTransformation гарантирует, что текст и сетка не станут пиксельными
+    pixmap = original_pixmap.scaled(600, 350, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    # Если картинка не найдена, создаем темный фон-заглушку
+    if pixmap.isNull():
+        pixmap = QPixmap(600, 350)
+        pixmap.fill(QColor("#2b2b2b"))
+
+    # Создаем и показываем сплеш-скрин
+    splash = QSplashScreen(pixmap, Qt.WindowStaysOnTopHint)
+    splash.show()
+
+    # Настраиваем шрифт для текста загрузки
+    font = QFont("Segoe UI", 10)
+    splash.setFont(font)
+
+    # Имитируем процесс загрузки (чтобы текст успел отрисоваться)
+    splash.showMessage("Инициализация ядра 3D-графики...", Qt.AlignBottom | Qt.AlignCenter, QColor("#FFFFFF"))
+    app.processEvents()
+
+    # --- Создание главного окна ---
+    # (В этот момент программа "задумывается", загружая UI и PyVista)
     window = MainWindow()
+
+    splash.showMessage("Загрузка компонентов интерфейса...", Qt.AlignBottom | Qt.AlignCenter, QColor("#FFFFFF"))
+    app.processEvents()
+
+    # Небольшая пауза, чтобы пользователь успел увидеть логотип (можно убрать)
+    time.sleep(1.0)
+
+    # Показываем основное окно и закрываем загрузочный экран
     window.show()
+    splash.finish(window)
+
     sys.exit(app.exec())
