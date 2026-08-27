@@ -158,8 +158,26 @@ class Ui_MainWindow(object):
         action_inspect.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_inspect))
         action_report.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_report))
 
+        # Подключаем кнопку "Новый проект" ---
+        self.btn_new_project.clicked.connect(self.show_new_project_dialog)
+
         # Открываем "Старт" по умолчанию при запуске
         self.stack.setCurrentWidget(self.page_start)
+
+    def show_new_project_dialog(self, checked=False):
+        """Открывает диалог выбора и переключает на нужный экран"""
+        dialog = DialogNewProject()
+        if dialog.exec():
+            print(f"DEBUG: Выбрана среда -> {dialog.selected_mode}")  # Будет видно в консоли PyCharm
+
+            if dialog.selected_mode == "slicer":
+                self.stack.setCurrentWidget(self.page_slicer)
+            elif dialog.selected_mode == "predef":
+                self.stack.setCurrentWidget(self.page_predef)
+            elif dialog.selected_mode == "inspect":
+                self.stack.setCurrentWidget(self.page_inspect)
+            elif dialog.selected_mode == "report":
+                self.stack.setCurrentWidget(self.page_report)
 
     # =========================================================
     # ГЕНЕРАТОРЫ РАБОЧИХ ЗОН
@@ -1022,3 +1040,82 @@ class DialogExportCLS(QDialog):
         btn_layout.addWidget(btn_yes)
         btn_layout.addWidget(btn_cancel)
         main_layout.addLayout(btn_layout)
+
+
+class DialogNewProject(QDialog):
+    """Окно выбора типа нового проекта"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Создание нового проекта")
+
+        # Немного увеличим высоту окна под два ряда кнопок
+        self.setFixedSize(450, 340)
+
+        # --- УСТАНОВКА ЛОГОТИПА В ЗАГОЛОВОК ---
+        from PySide6.QtGui import QIcon
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        logo_path = os.path.join(base_path, "assets", "logo.png")
+        self.setWindowIcon(QIcon(logo_path))
+        # ----------------------------------------
+
+        # Строгий темный стиль окна
+        self.setStyleSheet("""
+            QDialog { background-color: #2b2b2b; color: white; }
+            QLabel { color: #e0e0e0; font-size: 14px; font-weight: bold; }
+            QPushButton { 
+                background-color: #333333; 
+                border: 1px solid #555555; 
+                border-radius: 5px; 
+                color: white; 
+                font-size: 14px; 
+            }
+            QPushButton:hover { background-color: #444444; border: 1px solid #b31b1b; }
+            QPushButton:pressed { background-color: #b31b1b; color: white; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Выберите рабочую среду для нового проекта:"), alignment=Qt.AlignCenter)
+        layout.addSpacing(10)
+
+        # Сетка 2x2 для кнопок
+        grid = QGridLayout()
+        grid.setSpacing(15)
+
+        # Кнопки
+        self.btn_slicer = QPushButton("🔪\nСлайсер\n(Подготовка к печати)")
+        self.btn_slicer.setFixedSize(190, 110)
+        self.btn_slicer.setCursor(Qt.PointingHandCursor)
+
+        self.btn_predef = QPushButton("🕸\nПредеформация\n(Компенсация усадки)")
+        self.btn_predef.setFixedSize(190, 110)
+        self.btn_predef.setCursor(Qt.PointingHandCursor)
+
+        self.btn_inspect = QPushButton("🔍\nИнспектирование\n(Сравнение и контроль)")
+        self.btn_inspect.setFixedSize(190, 110)
+        self.btn_inspect.setCursor(Qt.PointingHandCursor)
+
+        self.btn_report = QPushButton("📄\nОтчет\n(Генерация документации)")
+        self.btn_report.setFixedSize(190, 110)
+        self.btn_report.setCursor(Qt.PointingHandCursor)
+
+        # Размещаем кнопки в сетке: строка, столбец
+        grid.addWidget(self.btn_slicer, 0, 0)
+        grid.addWidget(self.btn_predef, 0, 1)
+        grid.addWidget(self.btn_inspect, 1, 0)
+        grid.addWidget(self.btn_report, 1, 1)
+
+        layout.addLayout(grid)
+
+        # Логика выбора
+        # Логика выбора (используем lambda для передачи точного имени режима)
+        self.selected_mode = None
+        self.btn_slicer.clicked.connect(lambda: self.set_mode("slicer"))
+        self.btn_predef.clicked.connect(lambda: self.set_mode("predef"))
+        self.btn_inspect.clicked.connect(lambda: self.set_mode("inspect"))
+        self.btn_report.clicked.connect(lambda: self.set_mode("report"))
+
+    def set_mode(self, mode):
+        """Универсальная функция сохранения выбора"""
+        self.selected_mode = mode
+        self.accept()

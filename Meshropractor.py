@@ -595,11 +595,13 @@ class MainWindow(QMainWindow):
             self.log(f"[!] Ошибка при сохранении: {str(e)}")
 
     def action_new_project(self):
-        # ОЧИЩАЕМ СЦЕНУ ПЕРЕД НОВЫМ ПРОЕКТОМ
+        # ОЧИЩАЕМ СЦЕНУ И ОБНОВЛЯЕМ ЗАГОЛОВОК
         self.clear_project_data()
         self.update_title(None)
-        self.ui.stack.setCurrentWidget(self.ui.page_predef)
-        self.log("\n>>> Создан новый проект. Загрузите CAD и Скан для начала работы.")
+
+        # Строку переключения удалили, теперь командует диалоговое окно!
+
+        self.log("\n>>> Создана новая рабочая среда. Загрузите файлы для начала работы.")
 
     def action_open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Открыть проект", "", "MeshRopractor (*.mrp)")
