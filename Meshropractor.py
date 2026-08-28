@@ -9,7 +9,7 @@ import io
 import os
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, \
-    QLabel, QSplashScreen
+    QLabel, QSplashScreen, QTableWidgetItem
 from PySide6.QtCore import Qt, QSettings, QSize, QEvent
 from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon
 import pyvista as pv
@@ -40,6 +40,10 @@ class MainWindow(QMainWindow):
         self.cad_mesh = None
         self.scan_mesh = None
         self.result_mesh = None
+
+        # --- Переменные Слайсера ---
+        self.slicer_parts = []  # Список для хранения всех загруженных деталей
+
         self.actors = {"CAD": None, "Scan": None, "Result": None, "Heatmap": None}
         self.pick_mode = None
         self.cad_pts = []
@@ -68,7 +72,21 @@ class MainWindow(QMainWindow):
         self.ui.btn_save.clicked.connect(self.save_result)
         self.ui.btn_cancel_comp.clicked.connect(self.cancel_comp)
 
+        # --- Подключение кнопок ленты Слайсера ---
         self.ui.ribbon_btns["Создание срезов Concept Laser"].clicked.connect(self.open_export_dialog)
+        self.ui.ribbon_btns["Новый проект"].clicked.connect(self.action_new_project)
+        self.ui.ribbon_btns["Загрузить проект"].clicked.connect(self.action_open_project)
+        self.ui.ribbon_btns["Сохранить проект"].clicked.connect(self.save_project)
+        self.ui.ribbon_btns["Сохранить проект как"].clicked.connect(self.save_project)
+        self.ui.ribbon_btns["Импорт детали"].clicked.connect(self.import_slicer_part)
+        self.ui.ribbon_btns["Выгрузить деталь"].clicked.connect(self.unload_slicer_part)
+
+        # Кнопки-пустышки, чтобы не было крашей, если на них нажмут
+        self.ui.ribbon_btns["Сохранить выбранные детали как"].clicked.connect(self.save_selected_slicer_parts)
+        self.ui.ribbon_btns["Сохранить все в папку"].clicked.connect(lambda: self.log("Функция в разработке"))
+
+        # Обработка кликов по галочкам в таблице деталей Слайсера
+        self.ui.tbl_parts.itemChanged.connect(self.on_slicer_part_item_changed)
 
         self.ui.chk_view_cad.stateChanged.connect(self.update_visibility)
         self.ui.chk_view_scan.stateChanged.connect(self.update_visibility)
@@ -86,7 +104,7 @@ class MainWindow(QMainWindow):
         self.ui.btn_clear_heat.clicked.connect(self.clear_heatmap)
         self.ui.sliders["heat_limit"][0].valueChanged.connect(self.update_heatmap_limit)
 
-        # Глобальный перехватчик движений мыши для растягивания окна
+        # Глобальный перехватчик движений мыши для изменения размера окна
         QApplication.instance().installEventFilter(self)
 
     def _check_resize_zone(self, pos):
@@ -120,7 +138,6 @@ class MainWindow(QMainWindow):
         if not self.isVisible():
             return super().eventFilter(obj, event)
 
-        # Ловим движение мыши на границах безрамочного окна
         if event.type() == QEvent.MouseMove and not getattr(self, '_resizing', False):
             if event.buttons() == Qt.NoButton:
                 pos = self.mapFromGlobal(event.globalPosition().toPoint())
@@ -288,6 +305,127 @@ class MainWindow(QMainWindow):
             self.scan_mesh = trimesh.load(path)
             self.show_mesh("Scan", self.scan_mesh)
             self.add_tree_item(self.ui.cat_scan, filename, "Scan")
+
+    # === ФУНКЦИИ СЛАЙСЕРА ===
+    def import_slicer_part(self):
+        """Загружает STL деталь в 3D-сцену слайсера"""
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт детали для печати", "", "STL Files (*.stl)")
+        if path:
+            filename = os.path.basename(path)
+            self.log(f"\n>>> Загрузка детали в слайсер: {filename}...")
+            try:
+                mesh = trimesh.load(path)
+                pv_mesh = self.trimesh_to_pyvista(mesh)
+
+                # Убеждаемся, что сцена создана
+                self.ui._ensure_slicer_plotter()
+
+                # Уникальное имя для движка, чтобы он не перезаписывал старую модель
+                part_id = len(self.slicer_parts)
+                actor_name = f"slicer_part_{part_id}"
+
+                if self.ui.slicer_plotter:
+                    self.ui.slicer_plotter.add_mesh(pv_mesh, color="#d3d3d3", show_edges=True, name=actor_name)
+                    if part_id == 0:  # Центрируем камеру только для первой детали
+                        self.ui.slicer_plotter.reset_camera()
+                    self.ui.slicer_plotter.render()
+
+                # Сохраняем в список
+                self.slicer_parts.append({
+                    "mesh": mesh,
+                    "filename": filename,
+                    "actor_name": actor_name
+                })
+
+                # --- ДОБАВЛЯЕМ ДЕТАЛЬ В ТАБЛИЦУ ---
+                row = self.ui.tbl_parts.rowCount()
+                self.ui.tbl_parts.insertRow(row)
+
+                item_id = QTableWidgetItem(str(row + 1))
+                item_id.setTextAlignment(Qt.AlignCenter)
+                self.ui.tbl_parts.setItem(row, 0, item_id)
+
+                item_sel = QTableWidgetItem()
+                item_sel.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                item_sel.setCheckState(Qt.Checked)
+                self.ui.tbl_parts.setItem(row, 1, item_sel)
+
+                item_vis = QTableWidgetItem()
+                item_vis.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                item_vis.setCheckState(Qt.Checked)
+                self.ui.tbl_parts.setItem(row, 2, item_vis)
+
+                self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Плоск."))
+                self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem("0%"))
+                self.ui.tbl_parts.setItem(row, 5, QTableWidgetItem("Серый"))
+                self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem("STL"))
+                self.ui.tbl_parts.setItem(row, 7, QTableWidgetItem(filename))
+
+                self.ui.lbl_part_count.setText(f"Кол-во деталей: {self.ui.tbl_parts.rowCount()}")
+                self.log("✅ Деталь успешно импортирована в сцену слайсера.")
+            except Exception as e:
+                self.log(f"[!] Ошибка при импорте детали: {str(e)}")
+
+    def unload_slicer_part(self):
+        """Очищает сцену слайсера и удаляет все детали"""
+        self.slicer_parts = []
+        if getattr(self.ui, 'slicer_plotter', None):
+            self.ui.slicer_plotter.clear()
+            self.ui.slicer_plotter.add_axes()
+            self.ui.slicer_plotter.render()
+
+        self.ui.tbl_parts.setRowCount(0)
+        self.ui.lbl_part_count.setText("Кол-во деталей: 0")
+        self.log("\n[i] Детали выгружены, сцена слайсера очищена.")
+
+    def save_selected_slicer_parts(self):
+        """Сохраняет выбранные галочкой детали из слайсера в STL"""
+        if self.ui.tbl_parts.rowCount() == 0 or not self.slicer_parts:
+            self.log("[!] ОШИБКА: Нет загруженных деталей для сохранения.")
+            return
+
+        meshes_to_save = []
+        # Собираем меши всех деталей, у которых стоит галочка в колонке 1
+        for row in range(self.ui.tbl_parts.rowCount()):
+            item = self.ui.tbl_parts.item(row, 1)
+            if item and item.checkState() == Qt.Checked:
+                meshes_to_save.append(self.slicer_parts[row]["mesh"])
+
+        if not meshes_to_save:
+            self.log("[!] ВНИМАНИЕ: Нет выбранных деталей. Отметьте деталь галочкой в таблице.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить выбранные детали", "Exported_Parts.stl",
+                                              "STL Files (*.stl)")
+        if path:
+            self.log(f"\n⏳ Экспорт деталей ({len(meshes_to_save)} шт.) в {path}...")
+            try:
+                # Если выбрано несколько деталей, склеиваем их в один STL файл
+                if len(meshes_to_save) == 1:
+                    final_mesh = meshes_to_save[0]
+                else:
+                    final_mesh = trimesh.util.concatenate(meshes_to_save)
+
+                final_mesh.export(path)
+                self.log("✅ Детали успешно сохранены в STL!")
+            except Exception as e:
+                self.log(f"[!] Ошибка при сохранении: {str(e)}")
+
+    def on_slicer_part_item_changed(self, item):
+        """Скрывает/Показывает деталь в 3D-сцене при клике на галочку 'Видимые'"""
+        # Колонка 2 - это столбец "Видимые"
+        if item.column() == 2:
+            row = item.row()
+
+            # Защита: проверяем, что строка существует в нашем списке (чтобы не было крашей при очистке)
+            if row < len(self.slicer_parts):
+                actor_name = self.slicer_parts[row]["actor_name"]
+                is_visible = (item.checkState() == Qt.Checked)
+
+                # Если сцена активна и актер есть на сцене, меняем его видимость
+                if getattr(self.ui, 'slicer_plotter', None) and actor_name in self.ui.slicer_plotter.actors:
+                    self.ui.slicer_plotter.actors[actor_name].SetVisibility(is_visible)
+                    self.ui.slicer_plotter.render()
 
     def start_pick_cad(self):
         if not self.cad_mesh: return self.log("[!] Сначала загрузите CAD!")
@@ -501,28 +639,34 @@ class MainWindow(QMainWindow):
         self.lbl_app_title.setText(title)
 
     def clear_project_data(self):
+        """Очищает память и ОБЕ 3D-сцены для старта нового проекта"""
         self.clear_picks()
         self.cad_mesh = None
         self.scan_mesh = None
         self.result_mesh = None
 
-        # Безопасная очистка сцены
+        # Полностью очищаем переменные слайсера
+        self.slicer_parts = []
+
+        # Безопасная очистка сцены предеформации
         if getattr(self.ui, 'plotter', None):
             self.ui.plotter.clear()
             self.ui.plotter.add_axes()
+
+        # Безопасная очистка сцены слайсера
+        if getattr(self.ui, 'slicer_plotter', None):
+            self.ui.slicer_plotter.clear()
+            self.ui.slicer_plotter.add_axes()
+            self.ui.slicer_plotter.render()
 
         self.ui.cat_cad.takeChildren()
         self.ui.cat_scan.takeChildren()
         self.ui.cat_res.takeChildren()
 
-        if hasattr(self, 'slicer_part_path'):
-            self.slicer_part_path = ""
-            self.ui.lbl_slicer_part.setText("Деталь: Не выбрана")
-        if hasattr(self, 'slicer_supp_path'):
-            self.slicer_supp_path = ""
-            self.ui.lbl_slicer_supp.setText("Поддержки: Не выбраны (Опционально)")
+        self.ui.tbl_parts.setRowCount(0)
+        self.ui.lbl_part_count.setText("Кол-во деталей: 0")
 
-        self.log("\n[i] Память и 3D-сцена очищены.")
+        self.log("\n[i] Память и 3D-сцены полностью очищены. Начат новый проект.")
 
     def add_to_recent(self, path):
         recent = self.settings.value("recent_files", [])
@@ -571,17 +715,17 @@ class MainWindow(QMainWindow):
                 row += 1
 
     def save_project(self):
-        if not self.cad_mesh and not self.scan_mesh:
+        has_data = self.cad_mesh is not None or self.scan_mesh is not None or len(self.slicer_parts) > 0
+
+        if not has_data:
             self.log("[!] ОШИБКА: Проект пуст, нечего сохранять.")
             return
 
-        path, _ = QFileDialog.getSaveFileName(self, "Сохранить проект", "New_Project.mrp",
-                                              "MeshRopractor Project (*.mrp)")
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить проект", "New_Project.mrp", "MeshRopractor Project (*.mrp)")
         if not path: return
 
         self.log(f"\n⏳ Сохранение проекта в {path}...")
         try:
-            # Делаем скриншот только если сцена активна
             if self.ui.plotter:
                 img_array = self.ui.plotter.screenshot(transparent_background=False)
                 from PIL import Image
@@ -596,14 +740,20 @@ class MainWindow(QMainWindow):
                 if self.cad_mesh: zf.writestr('meshes/cad.stl', self.cad_mesh.export(file_type='stl'))
                 if self.scan_mesh: zf.writestr('meshes/scan.stl', self.scan_mesh.export(file_type='stl'))
                 if self.result_mesh: zf.writestr('meshes/result.stl', self.result_mesh.export(file_type='stl'))
-                if img_bytes: zf.writestr('preview.png', img_bytes)
 
                 meta = {
-                    "version": "1.1",
+                    "version": "1.2",
                     "cad_pts": [list(p) for p in self.cad_pts],
                     "scan_pts": [list(p) for p in self.scan_pts]
                 }
+
+                # Сохраняем ВСЕ детали слайсера и их оригинальные имена
+                for i, part_data in enumerate(self.slicer_parts):
+                    zf.writestr(f'meshes/slicer_part_{i}.stl', part_data['mesh'].export(file_type='stl'))
+                    meta[f"slicer_name_{i}"] = part_data['filename']
+
                 zf.writestr('project.json', json.dumps(meta, indent=4))
+                if img_bytes: zf.writestr('preview.png', img_bytes)
 
             self.add_to_recent(path)
             self.update_title(os.path.basename(path))
@@ -612,9 +762,9 @@ class MainWindow(QMainWindow):
             self.log(f"[!] Ошибка при сохранении: {str(e)}")
 
     def action_new_project(self):
+        # Нажатие на "Новый проект" теперь полностью очищает систему
         self.clear_project_data()
         self.update_title(None)
-        self.log("\n>>> Создана новая рабочая среда. Загрузите файлы для начала работы.")
 
     def action_open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Открыть проект", "", "MeshRopractor (*.mrp)")
@@ -622,30 +772,31 @@ class MainWindow(QMainWindow):
 
     def load_mrp_file(self, path):
         self.log(f"\n⏳ Открытие проекта {path}...")
-
-        # Переключаем вкладку (это АВТОМАТИЧЕСКИ загрузит 3D-сцену)
-        self.ui.stack.setCurrentWidget(self.ui.page_predef)
         self.clear_project_data()
 
         try:
             with zipfile.ZipFile(path, 'r') as zf:
                 file_list = zf.namelist()
                 meta = json.loads(zf.read('project.json').decode('utf-8')) if 'project.json' in file_list else {}
+                has_predef = False
 
                 if 'meshes/cad.stl' in file_list:
                     self.cad_mesh = trimesh.load(io.BytesIO(zf.read('meshes/cad.stl')), file_type='stl')
                     self.show_mesh("CAD", self.cad_mesh)
                     self.add_tree_item(self.ui.cat_cad, "CAD (из проекта)", "CAD")
+                    has_predef = True
 
                 if 'meshes/scan.stl' in file_list:
                     self.scan_mesh = trimesh.load(io.BytesIO(zf.read('meshes/scan.stl')), file_type='stl')
                     self.show_mesh("Scan", self.scan_mesh)
                     self.add_tree_item(self.ui.cat_scan, "Scan (из проекта)", "Scan")
+                    has_predef = True
 
                 if 'meshes/result.stl' in file_list:
                     self.result_mesh = trimesh.load(io.BytesIO(zf.read('meshes/result.stl')), file_type='stl')
                     self.show_mesh("Result", self.result_mesh)
                     self.add_tree_item(self.ui.cat_res, "Result (из проекта)", "Result")
+                    has_predef = True
 
                 self.pick_mode = 'CAD'
                 for pt in meta.get("cad_pts", []): self.place_marker(pt)
@@ -653,11 +804,72 @@ class MainWindow(QMainWindow):
                 for pt in meta.get("scan_pts", []): self.place_marker(pt)
                 self.pick_mode = None
 
+                # Восстанавливаем детали слайсера
+                slicer_files = [f for f in file_list if f.startswith('meshes/slicer_part_')]
+                if slicer_files:
+                    self.ui._ensure_slicer_plotter()
+                    # Блокируем сигналы таблицы, чтобы галочки не вызывали ошибки при загрузке
+                    self.ui.tbl_parts.blockSignals(True)
+
+                    for i, s_file in enumerate(slicer_files):
+                        mesh = trimesh.load(io.BytesIO(zf.read(s_file)), file_type='stl')
+                        pv_mesh = self.trimesh_to_pyvista(mesh)
+
+                        part_id = len(self.slicer_parts)
+                        actor_name = f"slicer_part_{part_id}"
+
+                        if self.ui.slicer_plotter:
+                            self.ui.slicer_plotter.add_mesh(pv_mesh, color="#d3d3d3", show_edges=True, name=actor_name)
+
+                        original_name = meta.get(f"slicer_name_{i}", f"Project_Part_{part_id + 1}.stl")
+
+                        self.slicer_parts.append({
+                            "mesh": mesh,
+                            "filename": original_name,
+                            "actor_name": actor_name
+                        })
+
+                        row = self.ui.tbl_parts.rowCount()
+                        self.ui.tbl_parts.insertRow(row)
+
+                        item_id = QTableWidgetItem(str(row + 1))
+                        item_id.setTextAlignment(Qt.AlignCenter)
+                        self.ui.tbl_parts.setItem(row, 0, item_id)
+
+                        item_sel = QTableWidgetItem()
+                        item_sel.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                        item_sel.setCheckState(Qt.Checked)
+                        self.ui.tbl_parts.setItem(row, 1, item_sel)
+
+                        item_vis = QTableWidgetItem()
+                        item_vis.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                        item_vis.setCheckState(Qt.Checked)
+                        self.ui.tbl_parts.setItem(row, 2, item_vis)
+
+                        self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Плоск."))
+                        self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem("0%"))
+                        self.ui.tbl_parts.setItem(row, 5, QTableWidgetItem("Серый"))
+                        self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem("STL"))
+                        self.ui.tbl_parts.setItem(row, 7, QTableWidgetItem(original_name))
+
+                    self.ui.lbl_part_count.setText(f"Кол-во деталей: {self.ui.tbl_parts.rowCount()}")
+                    if self.ui.slicer_plotter:
+                        self.ui.slicer_plotter.reset_camera()
+                        self.ui.slicer_plotter.render()
+
+                    self.ui.tbl_parts.blockSignals(False)  # Включаем сигналы обратно
+
             self.add_to_recent(path)
             self.update_title(os.path.basename(path))
 
             if self.ui.plotter:
                 self.ui.plotter.reset_camera()
+
+            # Умное переключение: если загрузили только Слайсер - открываем его!
+            if slicer_files and not has_predef:
+                self.ui.stack.setCurrentWidget(self.ui.page_slicer)
+            else:
+                self.ui.stack.setCurrentWidget(self.ui.page_predef)
 
             self.log("✅ Проект успешно восстановлен!")
 
@@ -665,7 +877,6 @@ class MainWindow(QMainWindow):
             self.log("[!] ОШИБКА: Файл поврежден или не является архивом .mrp")
         except Exception as e:
             self.log(f"[!] Ошибка: {str(e)}")
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

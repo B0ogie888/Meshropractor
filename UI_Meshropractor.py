@@ -7,14 +7,58 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QScrollArea, QTabWidget, QGridLayout, QSplitter,
                                QTreeWidget, QTreeWidgetItem, QToolBar, QStyle, QMainWindow,
                                QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog,
-                               QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox)
+                               QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox,
+                               QFrame)
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
 
 
+class CollapsibleBox(QWidget):
+    """Кастомный виджет для сворачиваемых панелей (как в Magics)"""
+
+    def __init__(self, title="", parent=None):
+        super().__init__(parent)
+        self.toggle_button = QPushButton(title)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)  # False = панель развернута при старте
+        self.toggle_button.setCursor(Qt.PointingHandCursor)
+        self.toggle_button.setStyleSheet("""
+            QPushButton { 
+                text-align: left; font-weight: bold; background-color: #383838; 
+                color: #e0e0e0; border: 1px solid #444; padding: 6px; border-radius: 2px; margin-top: 5px;
+            }
+            QPushButton:hover { background-color: #444444; border: 1px solid #777; }
+            QPushButton:checked { background-color: #2b2b2b; color: #aaaaaa; border: 1px solid #333; }
+        """)
+
+        self.content_area = QWidget()
+        self.content_area.setStyleSheet(
+            ".QWidget { background-color: #2b2b2b; border: 1px solid #444; border-top: none; }")
+        self.content_layout = QVBoxLayout(self.content_area)
+        self.content_layout.setContentsMargins(5, 5, 5, 5)
+        self.content_layout.setSpacing(5)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self.toggle_button)
+        main_layout.addWidget(self.content_area)
+
+        self.toggle_button.toggled.connect(self.on_toggle)
+
+    def on_toggle(self, checked):
+        # Если кнопка нажата (checked), скрываем контент
+        self.content_area.setVisible(not checked)
+        title = self.toggle_button.text()
+        # Меняем стрелочку в зависимости от состояния
+        if checked:
+            self.toggle_button.setText(title.replace("▼", "▶"))
+        else:
+            self.toggle_button.setText(title.replace("▶", "▼"))
+
 class Ui_MainWindow(object):
-    """Класс, который отвечает ТОЛЬКО за внешний вид программы (кнопки, цвета, ползунки)"""
+    """Класс, который отвечает ТОЛЬКО за внешний вид программы"""
 
     def setupUi(self, main_window: QMainWindow):
         print("[DEBUG] setupUi: старт", flush=True)
@@ -36,7 +80,35 @@ class Ui_MainWindow(object):
         self.central_widget = QWidget(main_window)
         self.central_widget.setMouseTracking(True)
         self.central_widget.setObjectName("MainWidget")
-        self.central_widget.setStyleSheet("#MainWidget { background-color: #2b2b2b; }")
+
+        # --- ГЛОБАЛЬНЫЙ СТИЛЬ: КРАСИМ ПОЛЗУНКИ И ЧЕКБОКСЫ ---
+        main_window.setStyleSheet("""
+                    #MainWidget { background-color: #2b2b2b; }
+
+                    /* Стиль ползунков (QSlider) - спокойный красный цвет */
+                    QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #333; border-radius: 3px; }
+                    QSlider::sub-page:horizontal { background: #c0392b; border-radius: 3px; }
+                    QSlider::handle:horizontal { background: #ffffff; border: 1px solid #777; width: 14px; margin: -4px 0; border-radius: 7px; }
+                    QSlider::handle:horizontal:hover { border: 1px solid #c0392b; background: #f0f0f0; }
+
+                    /* Стиль галочек (QCheckBox) - сплошной квадрат */
+                    QCheckBox { color: #e0e0e0; font-weight: bold; spacing: 8px; }
+                    QCheckBox::indicator { 
+                        width: 16px; 
+                        height: 16px; 
+                        border: 2px solid #555; 
+                        border-radius: 4px; 
+                        background-color: #333; 
+                    }
+                    QCheckBox::indicator:hover { 
+                        border: 2px solid #c0392b; 
+                    }
+                    QCheckBox::indicator:checked { 
+                        background-color: #c0392b; 
+                        border: 2px solid #c0392b; 
+                        border-radius: 4px;
+                    }
+                """)
         main_window.setCentralWidget(self.central_widget)
 
         self.base_layout = QVBoxLayout(self.central_widget)
@@ -166,11 +238,13 @@ class Ui_MainWindow(object):
 
         # Стартовая страница по умолчанию
         self.stack.setCurrentWidget(self.page_start)
+        print("[DEBUG] setupUi ПОЛНОСТЬЮ завершен OK", flush=True)
 
     def _ensure_slicer_plotter(self):
         """Лениво создает VTK-сцену слайсера"""
         if self.slicer_plotter is not None:
             return
+        print("[DEBUG] Ленивое создание slicer_plotter...", flush=True)
         self.slicer_plotter = QtInteractor(self._slicer_center_container)
         self.slicer_plotter.setCursor(Qt.ArrowCursor)
         self.slicer_plotter.set_background('white')
@@ -182,6 +256,7 @@ class Ui_MainWindow(object):
         """Лениво создает VTK-сцену предеформации"""
         if self.plotter is not None:
             return
+        print("[DEBUG] Ленивое создание plotter предеформации...", flush=True)
         self.plotter = QtInteractor(self._def_center_container)
         self.plotter.setCursor(Qt.ArrowCursor)
         self.plotter.set_background('white')
@@ -298,25 +373,25 @@ class Ui_MainWindow(object):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(5, 0, 5, 0)
+        layout.setSpacing(5)
 
+        # Единый темный стиль для внутренних элементов
         dark_style = """
-            QGroupBox { border: 1px solid #444; margin-top: 20px; font-weight: bold; color: #E0E0E0; background-color: #2b2b2b; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; top: -10px; }
+            .QWidget { background-color: #2b2b2b; }
             QTabWidget::pane { border: 1px solid #444; background-color: #333; }
             QTabBar::tab { background-color: #222; color: #aaa; padding: 4px 10px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
             QTabBar::tab:selected { background-color: #333; color: white; font-weight: bold; border-top: 2px solid #b31b1b; }
             QTableWidget { background-color: #2a2a2a; color: white; border: 1px solid #444; gridline-color: #444; font-size: 11px; }
             QHeaderView::section { background-color: #333; color: white; border: 1px solid #444; padding: 2px; font-size: 11px; }
-            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 4px 8px; border-radius: 2px; }
+            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 4px 8px; border-radius: 2px; font-weight: normal; }
             QPushButton:hover { background-color: #555; border: 1px solid #777; }
+            QComboBox { background-color: #333; color: white; border: 1px solid #555; padding: 3px; }
         """
+        content.setStyleSheet(dark_style)
 
-        grp_disp = QGroupBox("▼ Отображение")
-        grp_disp.setStyleSheet(dark_style)
-        lo_disp = QVBoxLayout(grp_disp)
-        lo_disp.setContentsMargins(5, 15, 5, 5)
+        # --- 1. Отображение ---
+        grp_disp = CollapsibleBox("▼ Отображение")
         tabs_disp = QTabWidget()
         tab_sec = QWidget()
         lo_sec = QVBoxLayout(tab_sec)
@@ -334,13 +409,11 @@ class Ui_MainWindow(object):
         lo_sec.addLayout(h_sec)
         tabs_disp.addTab(tab_sec, "Сечения")
         tabs_disp.addTab(QWidget(), "Срезы")
-        lo_disp.addWidget(tabs_disp)
+        grp_disp.content_layout.addWidget(tabs_disp)
         layout.addWidget(grp_disp)
 
-        grp_parts = QGroupBox("▼ Детали")
-        grp_parts.setStyleSheet(dark_style)
-        lo_parts = QVBoxLayout(grp_parts)
-        lo_parts.setContentsMargins(5, 15, 5, 5)
+        # --- 2. Детали ---
+        grp_parts = CollapsibleBox("▼ Детали")
         tabs_parts = QTabWidget()
         tab_list = QWidget()
         lo_list = QVBoxLayout(tab_list)
@@ -349,66 +422,64 @@ class Ui_MainWindow(object):
         cb_plat.addItem("M2_220x220_Magics")
         cb_plat.setStyleSheet("background-color: #333; color: white;")
         h_list_top.addWidget(cb_plat, stretch=1)
-        h_list_top.addWidget(QLabel("Кол-во деталей: 1"))
+
+        # 1. Сделали счетчик доступным извне
+        self.lbl_part_count = QLabel("Кол-во деталей: 0", styleSheet="color: white;")
+        h_list_top.addWidget(self.lbl_part_count)
         lo_list.addLayout(h_list_top)
-        tbl_parts = QTableWidget(1, 8)
-        tbl_parts.setHorizontalHeaderLabels(
-            ["#", "Выбранные", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
-        tbl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        tbl_parts.verticalHeader().setVisible(False)
-        tbl_parts.setFixedHeight(100)
-        lo_list.addWidget(tbl_parts)
-        lo_list.addWidget(QLabel("🔧 👁 📋 ❌ 🔄 (Инструменты работы с деталью)"))
+
+        # 2. Сделали таблицу доступной и пустой по умолчанию (0 строк)
+        self.tbl_parts = QTableWidget(0, 8)
+        self.tbl_parts.setHorizontalHeaderLabels(
+            ["#", "✔", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
+        self.tbl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.tbl_parts.horizontalHeader().setSectionResizeMode(7,
+                                                               QHeaderView.Stretch)  # Название займет всё оставшееся место
+        self.tbl_parts.verticalHeader().setVisible(False)
+        self.tbl_parts.setFixedHeight(100)
+        self.tbl_parts.setSelectionBehavior(QTableWidget.SelectRows)  # Выделение строки целиком
+        lo_list.addWidget(self.tbl_parts)
+
+        lo_list.addWidget(QLabel("🔧 👁 📋 ❌ 🔄 (Инструменты работы с деталью)", styleSheet="color: white;"))
         tabs_parts.addTab(tab_list, "Список деталей")
         tabs_parts.addTab(QWidget(), "Информация о детали")
-        tabs_parts.addTab(QWidget(), "Исправление деталей - инфо")
-        tabs_parts.addTab(QWidget(), "Оценка времени")
         tabs_parts.addTab(QWidget(), "Сцены")
-        lo_parts.addWidget(tabs_parts)
+        grp_parts.content_layout.addWidget(tabs_parts)
         layout.addWidget(grp_parts)
 
-        grp_notes = QGroupBox("▼ Заметки")
-        grp_notes.setStyleSheet(dark_style)
-        lo_notes = QVBoxLayout(grp_notes)
-        lo_notes.setContentsMargins(5, 15, 5, 5)
+        # --- 3. Заметки ---
+        grp_notes = CollapsibleBox("▼ Заметки")
         tabs_notes = QTabWidget()
         tabs_notes.addTab(QWidget(), "Текст")
         tabs_notes.addTab(QWidget(), "Рисунки")
         tabs_notes.addTab(QWidget(), "Приложения")
         tabs_notes.addTab(QWidget(), "Текстуры")
-        lo_notes.addWidget(tabs_notes)
+        grp_notes.content_layout.addWidget(tabs_notes)
         layout.addWidget(grp_notes)
 
-        grp_meas = QGroupBox("▼ Измерения")
-        grp_meas.setStyleSheet(dark_style)
-        lo_meas = QVBoxLayout(grp_meas)
-        lo_meas.setContentsMargins(5, 15, 5, 5)
+        # --- 4. Измерения ---
+        grp_meas = CollapsibleBox("▼ Измерения")
         tabs_meas = QTabWidget()
         tab_dist = QWidget()
         lo_dist = QVBoxLayout(tab_dist)
-        lo_dist.addWidget(QLabel("📏 🟢 🟩 (Тулбар измерений)"))
+        lo_dist.addWidget(QLabel("📏 🟢 🟩 (Тулбар измерений)", styleSheet="color: white;"))
         info_meas = QGroupBox("Информация о измерениях")
         info_meas.setFixedHeight(60)
+        info_meas.setStyleSheet(
+            "QGroupBox { border: 1px solid #444; margin-top: 15px; color: #aaa; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; top: -10px; }")
         lo_dist.addWidget(info_meas)
         lo_dist.addWidget(QCheckBox("Скрыто"))
         h_meas_btn = QHBoxLayout()
         h_meas_btn.addWidget(QPushButton("Выбрать"))
-        h_meas_btn.addWidget(QPushButton("Очистить измерения"))
-        h_meas_btn.addWidget(QPushButton("Настройки привязки"))
+        h_meas_btn.addWidget(QPushButton("Очистить"))
         lo_dist.addLayout(h_meas_btn)
         tabs_meas.addTab(tab_dist, "Расстояние")
-        tabs_meas.addTab(QWidget(), "Окружность")
         tabs_meas.addTab(QWidget(), "Угол")
-        tabs_meas.addTab(QWidget(), "Инфо")
-        tabs_meas.addTab(QWidget(), "Фактическая деталь")
-        tabs_meas.addTab(QWidget(), "Отчеты")
-        lo_meas.addWidget(tabs_meas)
+        grp_meas.content_layout.addWidget(tabs_meas)
         layout.addWidget(grp_meas)
 
-        grp_fix = QGroupBox("▼ Исправления деталей")
-        grp_fix.setStyleSheet(dark_style)
-        lo_fix = QVBoxLayout(grp_fix)
-        lo_fix.setContentsMargins(5, 15, 5, 5)
+        # --- 5. Исправления деталей (ВОССТАНОВЛЕНО) ---
+        grp_fix = CollapsibleBox("▼ Исправления деталей")
         tabs_fix = QTabWidget()
         tabs_fix.addTab(QWidget(), "Автоисправление")
         tabs_fix.addTab(QWidget(), "Базовые")
@@ -417,12 +488,68 @@ class Ui_MainWindow(object):
         tabs_fix.addTab(QWidget(), "Фрагмент")
         tabs_fix.addTab(QWidget(), "Нахлёсты")
         tabs_fix.addTab(QWidget(), "Точки")
-        lo_fix.addWidget(tabs_fix)
+        grp_fix.content_layout.addWidget(tabs_fix)
         layout.addWidget(grp_fix)
 
         layout.addStretch()
         scroll.setWidget(content)
         return scroll
+
+    def create_main_ribbon_tab(self):
+        """Создает вкладку 'ГЛАВНАЯ' с группами кнопок (Проект, Детали) и разделителем"""
+        from PySide6.QtWidgets import QFrame  # На всякий случай импортируем здесь
+        container = QWidget()
+        container.setStyleSheet("background-color: #2b2b2b;")
+        main_h_layout = QHBoxLayout(container)
+        main_h_layout.setAlignment(Qt.AlignLeft)
+        main_h_layout.setContentsMargins(8, 2, 8, 2)
+        main_h_layout.setSpacing(15)
+
+        def create_group(title, button_names):
+            group_widget = QWidget()
+            group_layout = QVBoxLayout(group_widget)
+            group_layout.setAlignment(Qt.AlignBottom)
+            group_layout.setContentsMargins(0, 0, 0, 0)
+            group_layout.setSpacing(2)
+
+            btn_layout = QHBoxLayout()
+            btn_layout.setSpacing(5)
+            for name in button_names:
+                btn = QPushButton(name)
+                btn.setFixedHeight(50)  # Фиксируем только высоту
+                btn.setMinimumWidth(75)  # Минимальная ширина для коротких названий
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.setStyleSheet("""
+                                QPushButton { background-color: transparent; color: #e0e0e0; border: none; border-radius: 4px; font-size: 11px; font-weight: bold; padding: 0 6px; }
+                                QPushButton:hover { background-color: #383838; border: 1px solid #666666; color: #ffffff; }
+                                QPushButton:pressed { background-color: #222222; border: 1px solid #b31b1b; }
+                            """)
+                clean_name = name.replace('\n', ' ')
+                self.ribbon_btns[clean_name] = btn
+                btn_layout.addWidget(btn)
+
+            group_layout.addLayout(btn_layout)
+            lbl = QLabel(title)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("color: #777777; font-size: 10px; font-weight: bold;")
+            group_layout.addWidget(lbl)
+            return group_widget
+
+        # Создаем группы и вертикальную линию
+        group_project = create_group("Проект", ["Новый\nпроект", "Загрузить\nпроект", "Сохранить\nпроект",
+                                                "Сохранить\nпроект как"])
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setStyleSheet("color: #555555;")
+        group_parts = create_group("Детали",
+                                   ["Импорт\nдетали", "Сохранить выбранные\nдетали как", "Сохранить\nвсе в папку",
+                                    "Выгрузить\nдеталь"])
+
+        main_h_layout.addWidget(group_project)
+        main_h_layout.addWidget(line)
+        main_h_layout.addWidget(group_parts)
+        main_h_layout.addStretch()
+        return container
 
     def init_slicer_page(self):
         page = QWidget()
@@ -439,7 +566,10 @@ class Ui_MainWindow(object):
             QTabBar::tab:hover { color: #ffffff; background-color: #333333; }
         """)
 
-        # Полностью восстановленная лента со всеми кнопками!
+        # === НОВАЯ ВКАДКА "ГЛАВНАЯ" (На 1 месте) ===
+        self.magics_ribbon.addTab(self.create_main_ribbon_tab(), "ГЛАВНАЯ")
+
+        # === ВОССТАНОВЛЕННЫЕ ОСТАЛЬНЫЕ ВКЛАДКИ ===
         self.magics_ribbon.addTab(
             self.create_ribbon_tab(["Создать", "Дублировать", "Пакетное\nдублирование"], "Создание"), "ИНСТРУМЕНТЫ")
         self.magics_ribbon.addTab(
@@ -522,13 +652,14 @@ class Ui_MainWindow(object):
 
         for name in button_names:
             btn = QPushButton(name)
-            btn.setFixedSize(115, 60)
+            btn.setFixedHeight(60)  # Фиксируем высоту панели инструментов
+            btn.setMinimumWidth(75)  # Кнопка сама расширится под длинный текст
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet("""
-                QPushButton { background-color: transparent; color: #e0e0e0; border: none; border-radius: 4px; font-size: 11px; font-weight: bold; }
-                QPushButton:hover { background-color: #383838; border: 1px solid #666666; color: #ffffff; }
-                QPushButton:pressed { background-color: #222222; border: 1px solid #b31b1b; }
-            """)
+                        QPushButton { background-color: transparent; color: #e0e0e0; border: none; border-radius: 4px; font-size: 11px; font-weight: bold; padding: 0 6px; }
+                        QPushButton:hover { background-color: #383838; border: 1px solid #666666; color: #ffffff; }
+                        QPushButton:pressed { background-color: #222222; border: 1px solid #b31b1b; }
+                    """)
             clean_name = name.replace('\n', ' ')
             self.ribbon_btns[clean_name] = btn
             h_layout.addWidget(btn)
@@ -554,7 +685,10 @@ class Ui_MainWindow(object):
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabel("Элементы проекта")
-        self.tree.setStyleSheet("QTreeWidget { font-size: 13px; color: white; background-color: #333; }")
+        self.tree.setStyleSheet("""
+                    QTreeWidget { font-size: 13px; color: white; background-color: #333333; border: 1px solid #444; }
+                    QHeaderView::section { background-color: #444444; color: white; font-weight: bold; border: 1px solid #555; padding: 4px; }
+                """)
 
         self.cat_cad = QTreeWidgetItem(self.tree, ["Номинальные элементы (CAD)"])
         self.cat_scan = QTreeWidgetItem(self.tree, ["Фактические элементы (Скан)"])
@@ -581,10 +715,10 @@ class Ui_MainWindow(object):
         # === ВКЛАДКИ НА ПРАВОЙ ПАНЕЛИ ===
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
-                    QTabBar::tab { color: black; background-color: #cccccc; padding: 5px 10px; }
-                    QTabBar::tab:selected { background-color: #ffffff; font-weight: bold; }
-                    QTabWidget::pane { border: 1px solid #555; }
-                    QWidget { color: #E0E0E0; } 
+                    QTabWidget::pane { border: 1px solid #444444; background-color: #2b2b2b; }
+                    QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 8px 15px; border: 1px solid #444444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
+                    QTabBar::tab:selected { background-color: #2b2b2b; color: #ffffff; font-weight: bold; border-top: 2px solid #b31b1b; }
+                    QTabBar::tab:hover { background-color: #333333; color: #ffffff; }
                 """)
 
         self.tab_align = QWidget()
@@ -693,6 +827,16 @@ class Ui_MainWindow(object):
 
     def initAlignTab(self):
         l = QVBoxLayout(self.tab_align)
+
+        # === ПРИМЕНЯЕМ ТЕМНЫЙ СТИЛЬ К ШАГУ 1 ===
+        self.tab_align.setStyleSheet("""
+            QGroupBox { font-weight: bold; color: #cccccc; border: 1px solid #555555; margin-top: 10px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
+            QPushButton { background-color: #444444; color: white; border: 1px solid #555555; padding: 8px; border-radius: 4px; font-weight: bold; }
+            QPushButton:hover { background-color: #555555; border: 1px solid #777777; }
+            QPushButton:pressed { background-color: #b31b1b; }
+        """)
+
         group_files = QGroupBox("1. Базовые данные")
         fl = QVBoxLayout()
         self.btn_load_cad = QPushButton("Загрузить Исходный CAD (.stl)")
@@ -705,7 +849,9 @@ class Ui_MainWindow(object):
         group_pts = QGroupBox("2. Вспомогательные маркеры (От локальных минимумов)")
         pt_layout = QVBoxLayout()
         self.lbl_pts = QLabel("Точек на CAD: 0 | Точек на Скане: 0")
-        self.lbl_pts.setStyleSheet("font-weight: bold; color: blue;")
+
+        # Изменили цвет на светло-синий для читаемости на темном фоне
+        self.lbl_pts.setStyleSheet("font-weight: bold; color: #5dade2;")
         pt_layout.addWidget(self.lbl_pts)
 
         row_btns = QHBoxLayout()
@@ -722,17 +868,28 @@ class Ui_MainWindow(object):
 
         self.btn_run_icp = QPushButton("▶ СОВМЕСТИТЬ МОДЕЛИ (ICP)")
         self.btn_run_icp.setStyleSheet(
-            "height: 50px; background-color: #2c3e50; color: white; font-weight: bold; font-size: 14px;")
+            "height: 50px; background-color: #2c3e50; color: white; font-weight: bold; font-size: 14px; border-radius: 4px;")
         l.addWidget(self.btn_run_icp)
         l.addStretch()
 
     def initCompTab(self):
         l = QVBoxLayout(self.tab_comp)
+
+        # === ПРИМЕНЯЕМ ЖЕСТКИЙ ТЕМНЫЙ СТИЛЬ К ШАГУ 2 ===
+        self.tab_comp.setStyleSheet("""
+            QWidget { background-color: #2b2b2b; color: #e0e0e0; }
+            QScrollArea { border: none; background-color: #2b2b2b; }
+            QCheckBox { color: #e0e0e0; font-weight: bold; }
+        """)
+
         self.comp_stack = QStackedWidget()
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+
         set_widget = QWidget()
+        # Точка (.QWidget) гарантирует, что стиль применится только к фону, не ломая ползунки!
+        set_widget.setStyleSheet(".QWidget { background-color: #2b2b2b; }")
         set_layout = QVBoxLayout(set_widget)
 
         self.add_slider(set_layout, "Разрешение маячков (>10k для мощных ПК)", 1000, 20000, 4000, 500, "points")
