@@ -9,9 +9,9 @@ import io
 import os
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, \
-    QLabel, QSplashScreen, QTableWidgetItem
+    QLabel, QSplashScreen, QTableWidgetItem, QMenu, QPushButton, QWidget, QHBoxLayout, QCheckBox
 from PySide6.QtCore import Qt, QSettings, QSize, QEvent
-from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon
+from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon, QCursor, QAction
 import pyvista as pv
 
 from UI_Meshropractor import Ui_MainWindow
@@ -85,8 +85,12 @@ class MainWindow(QMainWindow):
         self.ui.ribbon_btns["Сохранить выбранные детали как"].clicked.connect(self.save_selected_slicer_parts)
         self.ui.ribbon_btns["Сохранить все в папку"].clicked.connect(lambda: self.log("Функция в разработке"))
 
-        # Обработка кликов по галочкам в таблице деталей Слайсера
-        self.ui.tbl_parts.itemChanged.connect(self.on_slicer_part_item_changed)
+        # Обработка выделения детали кликом мыши (для фокусировки камеры)
+        self.ui.tbl_parts.itemSelectionChanged.connect(self.on_slicer_part_selection_changed)
+
+        # Клик по ячейке столбца "Затенение" -> всплывающее мини-меню выбора режима отображения детали
+        self.ui.tbl_parts.cellClicked.connect(self.on_slicer_part_cell_clicked)
+
 
         self.ui.chk_view_cad.stateChanged.connect(self.update_visibility)
         self.ui.chk_view_scan.stateChanged.connect(self.update_visibility)
@@ -333,8 +337,10 @@ class MainWindow(QMainWindow):
                 # Сохраняем в список
                 self.slicer_parts.append({
                     "mesh": mesh,
+                    "mesh_pv": pv_mesh,  # pyvista-версия меша - нужна, например, для рамки-bbox в меню "Затенение"
                     "filename": filename,
-                    "actor_name": actor_name
+                    "actor_name": actor_name,
+                    "last_visible_mode": "shaded_wire",  # соответствует show_edges=True в add_mesh выше
                 })
 
                 # --- ДОБАВЛЯЕМ ДЕТАЛЬ В ТАБЛИЦУ ---
@@ -345,19 +351,51 @@ class MainWindow(QMainWindow):
                 item_id.setTextAlignment(Qt.AlignCenter)
                 self.ui.tbl_parts.setItem(row, 0, item_id)
 
-                item_sel = QTableWidgetItem()
-                item_sel.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                item_sel.setCheckState(Qt.Checked)
-                self.ui.tbl_parts.setItem(row, 1, item_sel)
+                # --- Столбец 1: Выбранные (Чекбокс по центру) ---
+                sel_container = QWidget()
+                sel_layout = QHBoxLayout(sel_container)
+                sel_layout.setContentsMargins(0, 0, 0, 0)
+                sel_layout.setAlignment(Qt.AlignCenter)
+                chk_sel = QCheckBox()
+                chk_sel.setFixedSize(20, 20)  # <--- Обрубаем невидимый текст, делая ровный квадрат
+                chk_sel.setChecked(True)
+                chk_sel.setCursor(Qt.PointingHandCursor)
+                sel_layout.addWidget(chk_sel)
+                self.ui.tbl_parts.setCellWidget(row, 1, sel_container)
 
-                item_vis = QTableWidgetItem()
-                item_vis.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                item_vis.setCheckState(Qt.Checked)
-                self.ui.tbl_parts.setItem(row, 2, item_vis)
+                # --- Столбец 2: Видимые (Чекбокс по центру) ---
+                vis_container = QWidget()
+                vis_layout = QHBoxLayout(vis_container)
+                vis_layout.setContentsMargins(0, 0, 0, 0)
+                vis_layout.setAlignment(Qt.AlignCenter)
+                chk_vis = QCheckBox()
+                chk_vis.setFixedSize(20, 20)  # <--- То же самое здесь
+                chk_vis.setChecked(True)
+                chk_vis.setCursor(Qt.PointingHandCursor)
+                chk_vis.toggled.connect(lambda checked, r=row: self._on_vis_checkbox_changed(r, checked))
+                vis_layout.addWidget(chk_vis)
+                self.ui.tbl_parts.setCellWidget(row, 2, vis_container)
 
-                self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Плоск."))
+                self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Зат.+каркас"))  # соответствует show_edges=True при add_mesh выше
                 self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem("0%"))
-                self.ui.tbl_parts.setItem(row, 5, QTableWidgetItem("Серый"))
+                # --- Создаем кнопку цвета (столбец 5) ---
+                color_container = QWidget()
+                color_layout = QHBoxLayout(color_container)
+                color_layout.setContentsMargins(0, 0, 0, 0)
+                color_layout.setAlignment(Qt.AlignCenter)
+
+                btn_color = QPushButton()
+                btn_color.setFixedSize(24, 24)
+                btn_color.setCursor(Qt.PointingHandCursor)
+                # Стартовый цвет берем из настроек сцены слайсера (#d3d3d3)
+                btn_color.setStyleSheet("background-color: #d3d3d3; border: 1px solid #555; border-radius: 3px;")
+
+                # Привязываем клик к новой функции, передавая ей номер строки и саму кнопку
+                btn_color.clicked.connect(lambda checked=False, r=row, b=btn_color: self.pick_slicer_part_color(r, b))
+
+                color_layout.addWidget(btn_color)
+                # Используем setCellWidget вместо setItem!
+                self.ui.tbl_parts.setCellWidget(row, 5, color_container)
                 self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem("STL"))
                 self.ui.tbl_parts.setItem(row, 7, QTableWidgetItem(filename))
 
@@ -387,9 +425,11 @@ class MainWindow(QMainWindow):
         meshes_to_save = []
         # Собираем меши всех деталей, у которых стоит галочка в колонке 1
         for row in range(self.ui.tbl_parts.rowCount()):
-            item = self.ui.tbl_parts.item(row, 1)
-            if item and item.checkState() == Qt.Checked:
-                meshes_to_save.append(self.slicer_parts[row]["mesh"])
+            container = self.ui.tbl_parts.cellWidget(row, 1)
+            if container:
+                chk = container.findChild(QCheckBox)
+                if chk and chk.isChecked():
+                    meshes_to_save.append(self.slicer_parts[row]["mesh"])
 
         if not meshes_to_save:
             self.log("[!] ВНИМАНИЕ: Нет выбранных деталей. Отметьте деталь галочкой в таблице.")
@@ -411,21 +451,314 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.log(f"[!] Ошибка при сохранении: {str(e)}")
 
-    def on_slicer_part_item_changed(self, item):
-        """Скрывает/Показывает деталь в 3D-сцене при клике на галочку 'Видимые'"""
-        # Колонка 2 - это столбец "Видимые"
-        if item.column() == 2:
-            row = item.row()
+    def _on_vis_checkbox_changed(self, row, is_visible):
+        """Реагирует на переключение виджета галочки 'Видимые'."""
+        if row >= len(self.slicer_parts):
+            return
 
-            # Защита: проверяем, что строка существует в нашем списке (чтобы не было крашей при очистке)
-            if row < len(self.slicer_parts):
-                actor_name = self.slicer_parts[row]["actor_name"]
-                is_visible = (item.checkState() == Qt.Checked)
+        # is_visible теперь — это строгий True или False
+        if is_visible:
+            # Если галочка стоит, возвращаем деталь в последнем выбранном режиме отображения
+            last_mode = self.slicer_parts[row].get("last_visible_mode", "shaded_wire")
+            self._apply_part_display_mode(row, last_mode, sync_visible_checkbox=False)
+        else:
+            # Если снята, полностью прячем со сцены
+            self._apply_part_display_mode(row, "hide", sync_visible_checkbox=False)
 
-                # Если сцена активна и актер есть на сцене, меняем его видимость
-                if getattr(self.ui, 'slicer_plotter', None) and actor_name in self.ui.slicer_plotter.actors:
-                    self.ui.slicer_plotter.actors[actor_name].SetVisibility(is_visible)
-                    self.ui.slicer_plotter.render()
+    def on_slicer_part_selection_changed(self):
+        """Центрирует камеру и ось вращения на выбранной в таблице детали"""
+        if not getattr(self.ui, 'slicer_plotter', None) or not self.ui.tbl_parts.selectedItems():
+            return
+
+        row = self.ui.tbl_parts.currentRow()
+
+        if 0 <= row < len(self.slicer_parts):
+            actor_name = self.slicer_parts[row]["actor_name"]
+
+            if actor_name in self.ui.slicer_plotter.actors:
+                actor = self.ui.slicer_plotter.actors[actor_name]
+
+                # --- ИСПРАВЛЕНИЕ БАГА: Не центрируем камеру на скрытых деталях ---
+                if not actor.GetVisibility():
+                    return
+                # -----------------------------------------------------------------
+
+                new_focal_point = np.array(actor.center)
+
+                camera = self.ui.slicer_plotter.camera
+                old_focal_point = np.array(camera.GetFocalPoint())
+
+                shift = new_focal_point - old_focal_point
+
+                old_pos = np.array(camera.GetPosition())
+                camera.SetFocalPoint(*new_focal_point)
+                camera.SetPosition(*(old_pos + shift))
+
+                self.ui.slicer_plotter.reset_camera_clipping_range()
+                self.ui.slicer_plotter.render()
+
+    # ==========================================================
+    # МИНИ-МЕНЮ СТОЛБЦА "ЗАТЕНЕНИЕ" (режим отображения детали)
+    # ==========================================================
+    # Индексы столбцов tbl_parts для справки (см. setHorizontalHeaderLabels в UI_Meshropractor.py):
+    #   0 - "#"            1 - "Выбранные"      2 - "Видимые"     3 - "Затенение"
+    #   4 - "Прозр."        5 - "Цвет"           6 - "Способ"      7 - "Название"
+    COL_VISIBLE = 2
+    COL_SHADING = 3
+    COL_TRANSPARENCY = 4
+
+    def on_slicer_part_cell_clicked(self, row, column):
+        """Клик по ячейке таблицы деталей слайсера."""
+        if row < 0 or row >= len(self.slicer_parts):
+            return
+
+        # === ЕСЛИ КЛИКНУЛИ ПО СТОЛБЦУ "ЗАТЕНЕНИЕ" ===
+        if column == self.COL_SHADING:
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu { background-color: #333333; color: white; border: 1px solid #555; font-size: 13px; }
+                QMenu::item { padding: 6px 24px 6px 12px; }
+                QMenu::item:selected { background-color: #b31b1b; }
+                QMenu::separator { height: 1px; background: #555; margin: 4px 6px; }
+            """)
+
+            modes = [
+                ("Скрыть", "hide", True),
+                ("Затенение", "shaded", False),
+                ("Треугольники", "triangles", False),
+                ("Затенение и каркас", "shaded_wire", False),
+                ("Каркас", "wireframe", False),
+                ("Ограничивающий параллелепипед", "bbox", False),
+                ("Прозрачность", "transparent", False),
+                ("Без затенения", "flat", False),
+            ]
+            for label, mode_key, add_separator_after in modes:
+                action = QAction(label, self)
+                action.triggered.connect(
+                    lambda checked=False, r=row, mk=mode_key: self._apply_part_display_mode(r, mk))
+                menu.addAction(action)
+                if add_separator_after:
+                    menu.addSeparator()
+
+            menu.exec(QCursor.pos())
+
+        # === ЕСЛИ КЛИКНУЛИ ПО СТОЛБЦУ "ПРОЗРАЧНОСТЬ" ===
+        elif column == self.COL_TRANSPARENCY:
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+                QMenu { background-color: #333333; color: white; border: 1px solid #555; font-size: 13px; }
+                QMenu::item { padding: 6px 24px 6px 12px; }
+                QMenu::item:selected { background-color: #b31b1b; }
+            """)
+
+            # Уровни прозрачности в процентах (0 = сплошная деталь, 100 = невидимая)
+            levels = [0, 25, 50, 75, 90]
+            for val in levels:
+                action = QAction(f"{val}%", self)
+                action.triggered.connect(lambda checked=False, r=row, v=val: self._apply_part_transparency(r, v))
+                menu.addAction(action)
+
+            menu.exec(QCursor.pos())
+
+    def _apply_part_display_mode(self, row, mode_key, sync_visible_checkbox=True):
+        """Применяет выбранный в мини-меню режим отображения к 3D-актеру детали.
+
+        mode_key - один из:
+            'hide'         - Скрыть (деталь полностью пропадает со сцены)
+            'shaded'       - Затенение (обычная сплошная закрашенная поверхность)
+            'triangles'    - Треугольники (та же поверхность, но без сглаживания
+                              нормалей - видна огранка/триангуляция меша)
+            'shaded_wire'  - Затенение и каркас (закрашенная поверхность + ребра сетки поверх)
+            'wireframe'    - Каркас (только ребра сетки, без закрашенных граней)
+            'bbox'         - Ограничивающий параллелепипед (вместо детали - габаритный "ящик")
+            'transparent'  - Прозрачность (полупрозрачная поверхность)
+            'flat'         - Без затенения (ровная заливка цветом, без учета освещения сцены)
+
+        sync_visible_checkbox - обновлять ли галочку "Видимые" (COL_VISIBLE) под новый
+            режим. По умолчанию True (вызов из меню "Затенение" - тогда галочка должна
+            подстроиться под режим). При вызове ИЗ обработчика самой галочки
+            (on_slicer_part_item_changed) передают False, чтобы не дергать ее
+            повторно и не плодить лишние сигналы - она там уже в нужном состоянии.
+        """
+        if row >= len(self.slicer_parts):
+            return
+        plotter = getattr(self.ui, 'slicer_plotter', None)
+        if not plotter:
+            return
+
+        part = self.slicer_parts[row]
+        actor_name = part["actor_name"]
+        actor = plotter.actors.get(actor_name)
+        if actor is None:
+            return
+
+        prop = actor.GetProperty()
+        bbox_name = f"{actor_name}__bbox"  # имя вспомогательного актера с рамкой-bbox
+        bbox_actor = plotter.actors.get(bbox_name)
+
+        # Перед применением конкретного режима сбрасываем к "нейтральному" состоянию:
+        # сама деталь видима, рамка (если создавалась раньше) скрыта, освещение/прозрачность
+        # по умолчанию. Дальше каждый режим включает только то, что ему нужно.
+        actor.SetVisibility(True)
+        if bbox_actor is not None:
+            bbox_actor.SetVisibility(False)
+        # Считываем текущую прозрачность из таблицы, чтобы не сбросить ее случайно
+        current_trans_pct = 0
+        trans_item = self.ui.tbl_parts.item(row, self.COL_TRANSPARENCY)
+        if trans_item and trans_item.text().endswith('%'):
+            current_trans_pct = int(trans_item.text()[:-1])
+        prop.SetOpacity(1.0 - (current_trans_pct / 100.0))
+        prop.SetLighting(True)
+        prop.SetEdgeVisibility(False)
+        prop.SetRepresentationToSurface()
+        prop.SetInterpolationToGouraud()  # гладкое (сглаженное по нормалям) освещение
+
+        if mode_key == "hide":
+            # --- Скрыть: полностью прячем деталь со сцены ---
+            actor.SetVisibility(False)
+
+        elif mode_key == "shaded":
+            # --- Затенение: сплошная закрашенная поверхность без видимых ребер ---
+            pass  # это и есть "нейтральное" состояние, заданное выше
+
+        elif mode_key == "triangles":
+            # --- Треугольники: та же поверхность, но БЕЗ сглаживания нормалей -
+            # каждая треугольная грань меша видна отдельной плоской фасеткой ---
+            prop.SetInterpolationToFlat()
+
+        elif mode_key == "shaded_wire":
+            # --- Затенение и каркас: закрашенная поверхность + поверх видны ребра треугольников ---
+            prop.SetEdgeVisibility(True)
+            prop.SetEdgeColor(0.0, 0.0, 0.0)
+
+        elif mode_key == "wireframe":
+            # --- Каркас: только ребра сетки, без закрашенных граней ---
+            prop.SetRepresentationToWireframe()
+
+        elif mode_key == "bbox":
+            # --- Ограничивающий параллелепипед: прячем саму деталь и показываем вместо
+            # нее габаритный "ящик". Актер рамки создается лениво один раз на деталь
+            # и переиспользуется при повторных выборах этого режима ---
+            actor.SetVisibility(False)
+            if bbox_actor is None and part.get("mesh_pv") is not None:
+                outline_mesh = part["mesh_pv"].outline()
+                bbox_actor = plotter.add_mesh(outline_mesh, color="yellow", line_width=2, name=bbox_name)
+            if bbox_actor is not None:
+                bbox_actor.SetVisibility(True)
+
+        elif mode_key == "transparent":
+            # --- Прозрачность: полупрозрачная поверхность, чтобы видеть, что за деталью ---
+            prop.SetOpacity(0.35)
+
+        elif mode_key == "flat":
+            # --- Без затенения: ровная заливка цветом без учета освещения сцены
+            # (деталь не темнеет/не светлеет в зависимости от угла к источнику света) ---
+            prop.SetLighting(False)
+
+        # Запоминаем последний НЕ-скрывающий режим - он нужен, чтобы при повторном
+        # включении галочки "Видимые" деталь вернулась именно в него (а не всегда
+        # в "Затенение и каркас" по умолчанию), и чтобы для 'bbox' при показе
+        # обратно появлялась рамка, а не сам меш.
+        if mode_key != "hide":
+            part["last_visible_mode"] = mode_key
+
+        # Ячейка столбца "Затенение" - подпись текущего режима
+        mode_labels = {
+            "hide": "Скрыто", "shaded": "Затенение", "triangles": "Треугольники",
+            "shaded_wire": "Зат.+каркас", "wireframe": "Каркас",
+            "bbox": "Огр. паралл.", "transparent": "Прозрачность", "flat": "Без затенения",
+        }
+        cell = self.ui.tbl_parts.item(row, self.COL_SHADING)
+        if cell:
+            cell.setText(mode_labels.get(mode_key, ""))
+
+            # Галочка "Видимые" (COL_VISIBLE) - держим в согласии с фактической видимостью:
+            if sync_visible_checkbox:
+                container = self.ui.tbl_parts.cellWidget(row, self.COL_VISIBLE)
+                if container:
+                    chk = container.findChild(QCheckBox)
+                    if chk:
+                        chk.blockSignals(True)
+                        chk.setChecked(mode_key != "hide")
+                        chk.blockSignals(False)
+
+            # --- ИСПРАВЛЕНИЕ БАГА: Принудительно пересчитываем глубину видимости камеры ---
+            plotter.reset_camera_clipping_range()
+
+            plotter.render()
+
+    def _apply_part_transparency(self, row, trans_pct):
+        """Меняет уровень прозрачности актера в PyVista и обновляет текст в таблице"""
+        if row >= len(self.slicer_parts):
+            return
+
+        plotter = getattr(self.ui, 'slicer_plotter', None)
+        if not plotter:
+            return
+
+        part = self.slicer_parts[row]
+        actor_name = part["actor_name"]
+        actor = plotter.actors.get(actor_name)
+
+        if actor is not None:
+            # PyVista принимает Opacity от 1.0 (сплошной) до 0.0 (полностью прозрачный).
+            # Поэтому инвертируем наши проценты: 75% прозрачности = 0.25 Opacity
+            opacity_value = 1.0 - (trans_pct / 100.0)
+            actor.GetProperty().SetOpacity(opacity_value)
+
+            # Если мы сделали деталь прозрачной вручную, обновляем ее статус
+            # в столбце "Затенение", чтобы не было конфликтов логики
+            if trans_pct > 0:
+                cell_shading = self.ui.tbl_parts.item(row, self.COL_SHADING)
+                if cell_shading and cell_shading.text() not in ["Каркас", "Огр. паралл.", "Скрыто"]:
+                    cell_shading.setText("Прозрачность")
+                    part["last_visible_mode"] = "transparent"
+            elif trans_pct == 0:
+                # Если вернули 0% прозрачности, логично вернуть надпись "Затенение"
+                cell_shading = self.ui.tbl_parts.item(row, self.COL_SHADING)
+                if cell_shading and cell_shading.text() == "Прозрачность":
+                    cell_shading.setText("Затенение")
+                    part["last_visible_mode"] = "shaded"
+
+        # Обновляем текст в ячейке "Прозр."
+        cell_trans = self.ui.tbl_parts.item(row, self.COL_TRANSPARENCY)
+        if cell_trans:
+            cell_trans.setText(f"{trans_pct}%")
+
+        plotter.render()
+
+    def pick_slicer_part_color(self, row, btn):
+        """Вызывает окно выбора цвета и перекрашивает 3D-деталь в слайсере"""
+        if row >= len(self.slicer_parts):
+            return
+
+        plotter = getattr(self.ui, 'slicer_plotter', None)
+        if not plotter:
+            return
+
+        part = self.slicer_parts[row]
+        actor_name = part["actor_name"]
+        actor = plotter.actors.get(actor_name)
+
+        if not actor:
+            return
+
+        # 1. Считываем текущий цвет детали, чтобы палитра открывалась не с белого цвета
+        current_rgb = actor.GetProperty().GetColor()
+        initial_color = QColor(int(current_rgb[0] * 255), int(current_rgb[1] * 255), int(current_rgb[2] * 255))
+
+        # 2. Вызываем стандартное окно палитры
+        color = QColorDialog.getColor(initial_color, self, f"Выберите цвет для детали {part['filename']}")
+
+        # 3. Если пользователь выбрал цвет и нажал "ОК"
+        if color.isValid():
+            hex_color = color.name()
+            # Перекрашиваем квадратик в таблице
+            btn.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #555; border-radius: 3px;")
+            # Перекрашиваем саму деталь в 3D-движке (PyVista ждет доли от 0 до 1, поэтому redF, greenF)
+            actor.GetProperty().SetColor(color.redF(), color.greenF(), color.blueF())
+
+            plotter.render()
 
     def start_pick_cad(self):
         if not self.cad_mesh: return self.log("[!] Сначала загрузите CAD!")
@@ -825,8 +1158,10 @@ class MainWindow(QMainWindow):
 
                         self.slicer_parts.append({
                             "mesh": mesh,
+                            "mesh_pv": pv_mesh,
                             "filename": original_name,
-                            "actor_name": actor_name
+                            "actor_name": actor_name,
+                            "last_visible_mode": "shaded_wire",
                         })
 
                         row = self.ui.tbl_parts.rowCount()
@@ -837,16 +1172,18 @@ class MainWindow(QMainWindow):
                         self.ui.tbl_parts.setItem(row, 0, item_id)
 
                         item_sel = QTableWidgetItem()
+                        item_sel.setTextAlignment(Qt.AlignCenter)
                         item_sel.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                         item_sel.setCheckState(Qt.Checked)
                         self.ui.tbl_parts.setItem(row, 1, item_sel)
 
                         item_vis = QTableWidgetItem()
+                        item_vis.setTextAlignment(Qt.AlignCenter)
                         item_vis.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                         item_vis.setCheckState(Qt.Checked)
                         self.ui.tbl_parts.setItem(row, 2, item_vis)
 
-                        self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Плоск."))
+                        self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Зат.+каркас"))  # соответствует show_edges=True при add_mesh выше
                         self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem("0%"))
                         self.ui.tbl_parts.setItem(row, 5, QTableWidgetItem("Серый"))
                         self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem("STL"))

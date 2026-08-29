@@ -83,32 +83,34 @@ class Ui_MainWindow(object):
 
         # --- ГЛОБАЛЬНЫЙ СТИЛЬ: КРАСИМ ПОЛЗУНКИ И ЧЕКБОКСЫ ---
         main_window.setStyleSheet("""
-                    #MainWidget { background-color: #2b2b2b; }
+                            #MainWidget { background-color: #2b2b2b; }
 
-                    /* Стиль ползунков (QSlider) - спокойный красный цвет */
-                    QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #333; border-radius: 3px; }
-                    QSlider::sub-page:horizontal { background: #c0392b; border-radius: 3px; }
-                    QSlider::handle:horizontal { background: #ffffff; border: 1px solid #777; width: 14px; margin: -4px 0; border-radius: 7px; }
-                    QSlider::handle:horizontal:hover { border: 1px solid #c0392b; background: #f0f0f0; }
+                            /* Стиль ползунков (QSlider) - спокойный красный цвет */
+                            QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #333; border-radius: 3px; }
+                            QSlider::sub-page:horizontal { background: #c0392b; border-radius: 3px; }
+                            QSlider::handle:horizontal { background: #ffffff; border: 1px solid #777; width: 14px; margin: -4px 0; border-radius: 7px; }
+                            QSlider::handle:horizontal:hover { border: 1px solid #c0392b; background: #f0f0f0; }
 
-                    /* Стиль галочек (QCheckBox) - сплошной квадрат */
-                    QCheckBox { color: #e0e0e0; font-weight: bold; spacing: 8px; }
-                    QCheckBox::indicator { 
-                        width: 16px; 
-                        height: 16px; 
-                        border: 2px solid #555; 
-                        border-radius: 4px; 
-                        background-color: #333; 
-                    }
-                    QCheckBox::indicator:hover { 
-                        border: 2px solid #c0392b; 
-                    }
-                    QCheckBox::indicator:checked { 
-                        background-color: #c0392b; 
-                        border: 2px solid #c0392b; 
-                        border-radius: 4px;
-                    }
-                """)
+                            /* Стиль галочек (QCheckBox) - темный квадрат с векторной галочкой */
+                            QCheckBox { color: #e0e0e0; font-weight: bold; spacing: 8px; }
+                            QCheckBox::indicator { 
+                                width: 16px; 
+                                height: 16px; 
+                                border: 2px solid #555; 
+                                border-radius: 4px; 
+                                background-color: #333; 
+                            }
+                            QCheckBox::indicator:hover { 
+                                border: 2px solid #c0392b; 
+                            }
+                            QCheckBox::indicator:checked { 
+                                background-color: #333; 
+                                border: 2px solid #c0392b; 
+                                border-radius: 4px;
+                                /* Используем встроенную системную галочку Qt */
+                                image: url(":/qt-project.org/styles/commonstyle/images/check-16.png");
+                            }
+                        """)
         main_window.setCentralWidget(self.central_widget)
 
         self.base_layout = QVBoxLayout(self.central_widget)
@@ -378,16 +380,43 @@ class Ui_MainWindow(object):
 
         # Единый темный стиль для внутренних элементов
         dark_style = """
-            .QWidget { background-color: #2b2b2b; }
-            QTabWidget::pane { border: 1px solid #444; background-color: #333; }
-            QTabBar::tab { background-color: #222; color: #aaa; padding: 4px 10px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
-            QTabBar::tab:selected { background-color: #333; color: white; font-weight: bold; border-top: 2px solid #b31b1b; }
-            QTableWidget { background-color: #2a2a2a; color: white; border: 1px solid #444; gridline-color: #444; font-size: 11px; }
-            QHeaderView::section { background-color: #333; color: white; border: 1px solid #444; padding: 2px; font-size: 11px; }
-            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 4px 8px; border-radius: 2px; font-weight: normal; }
-            QPushButton:hover { background-color: #555; border: 1px solid #777; }
-            QComboBox { background-color: #333; color: white; border: 1px solid #555; padding: 3px; }
-        """
+                    .QWidget { background-color: #2b2b2b; }
+                    QTabWidget::pane { border: 1px solid #444; background-color: #333; }
+                    QTabBar::tab { background-color: #222; color: #aaa; padding: 4px 10px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
+                    QTabBar::tab:selected { background-color: #333; color: white; font-weight: bold; border-top: 2px solid #b31b1b; }
+                    QTableWidget { background-color: #2a2a2a; color: white; border: 1px solid #444; gridline-color: #444; font-size: 11px; }
+                    QHeaderView::section { background-color: #333; color: white; border: 1px solid #444; padding: 2px; font-size: 11px; }
+                    QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 4px 8px; border-radius: 2px; font-weight: normal; }
+                    QPushButton:hover { background-color: #555; border: 1px solid #777; }
+                    QComboBox { background-color: #333; color: white; border: 1px solid #555; padding: 3px; }
+
+                    /* Стилизуем чекбоксы внутри таблицы: центрируем через выравнивание ячейки
+                       (см. setTextAlignment(Qt.AlignCenter) на самом item), БЕЗ жесткого сдвига -
+                       margin-left фиксированной величиной "уезжал" за пределы узких колонок
+                       (например "Видимые", 70px) и там чекбокс мог вообще не быть виден. */
+                    QTableView::indicator {
+                        width: 14px;
+                        height: 14px;
+                        border: 2px solid #555;
+                        border-radius: 3px;
+                        background-color: #333;
+                    }
+                    QTableView::indicator:hover {
+                        border: 2px solid #c0392b;
+                    }
+                    /* Состояние "отмечено" показываем сплошной заливкой - раньше здесь
+                       грузилась встроенная иконка Qt по внутреннему пути ресурсов, которая
+                       на практике не загружалась, и отмеченный чекбокс выглядел как пустой
+                       квадрат с одной лишь красной рамкой (галочки не было видно вовсе). */
+                    QTableView::indicator:checked {
+                        background-color: #c0392b;
+                        border: 2px solid #c0392b;
+                    }
+                    QTableView::indicator:unchecked {
+                        background-color: #333;
+                        border: 2px solid #555;
+                    }
+                """
         content.setStyleSheet(dark_style)
 
         # --- 1. Отображение ---
@@ -431,10 +460,21 @@ class Ui_MainWindow(object):
         # 2. Сделали таблицу доступной и пустой по умолчанию (0 строк)
         self.tbl_parts = QTableWidget(0, 8)
         self.tbl_parts.setHorizontalHeaderLabels(
-            ["#", "✔", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
-        self.tbl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.tbl_parts.horizontalHeader().setSectionResizeMode(7,
-                                                               QHeaderView.Stretch)  # Название займет всё оставшееся место
+            ["#", "Выбранные ▾", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
+
+        # Включаем интерактивный режим (позволяет пользователю таскать границы столбцов)
+        self.tbl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.tbl_parts.horizontalHeader().setStretchLastSection(True)  # Название всегда заполняет остаток справа
+
+        # Задаем комфортную стартовую ширину для каждого столбца в пикселях
+        self.tbl_parts.horizontalHeader().resizeSection(0, 25)  # #
+        self.tbl_parts.horizontalHeader().resizeSection(1, 85)  # Выбранные ▾
+        self.tbl_parts.horizontalHeader().resizeSection(2, 70)  # Видимые
+        self.tbl_parts.horizontalHeader().resizeSection(3, 70)  # Затенение
+        self.tbl_parts.horizontalHeader().resizeSection(4, 50)  # Прозр.
+        self.tbl_parts.horizontalHeader().resizeSection(5, 50)  # Цвет
+        self.tbl_parts.horizontalHeader().resizeSection(6, 50)  # Способ
+
         self.tbl_parts.verticalHeader().setVisible(False)
         self.tbl_parts.setFixedHeight(100)
         self.tbl_parts.setSelectionBehavior(QTableWidget.SelectRows)  # Выделение строки целиком
