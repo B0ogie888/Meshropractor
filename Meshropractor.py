@@ -86,8 +86,16 @@ class MainWindow(QMainWindow):
         self.ui.ribbon_btns["Сохранить выбранные детали как"].clicked.connect(self.save_selected_slicer_parts)
         self.ui.ribbon_btns["Сохранить все в папку"].clicked.connect(lambda: self.log("Функция в разработке"))
 
-        # Обработка выделения детали кликом мыши (для фокусировки камеры)
-        self.ui.tbl_parts.itemSelectionChanged.connect(self.on_slicer_part_selection_changed)
+        # --- Сигналы вкладки "Информация о детали" ---
+        self.ui.cb_info_name.currentIndexChanged.connect(self.update_part_info_tab)
+        self.ui.btn_info_next.clicked.connect(self.select_next_part_info)
+
+        # Обработка клика по детали (для фокусировки камеры)
+        self.ui.tbl_parts.cellClicked.connect(self.on_slicer_part_selection_changed)
+
+        # --- НОВЫЕ СИГНАЛЫ ДЛЯ ПЕРЕИМЕНОВАНИЯ ---
+        self.ui.tbl_parts.cellDoubleClicked.connect(self.on_slicer_part_double_clicked)
+        self.ui.tbl_parts.cellChanged.connect(self.on_slicer_part_name_changed)
 
         # Клик по ячейке столбца "Затенение" -> всплывающее мини-меню выбора режима отображения детали
         self.ui.tbl_parts.cellClicked.connect(self.on_slicer_part_cell_clicked)
@@ -348,8 +356,11 @@ class MainWindow(QMainWindow):
                 row = self.ui.tbl_parts.rowCount()
                 self.ui.tbl_parts.insertRow(row)
 
+                # --- Столбец 0: Номер по порядку (#) ---
                 item_id = QTableWidgetItem(str(row + 1))
                 item_id.setTextAlignment(Qt.AlignCenter)
+                # Оставляем ячейку активной для клика, но ЗАПРЕЩАЕМ двойной клик и ввод текста:
+                item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
                 self.ui.tbl_parts.setItem(row, 0, item_id)
 
                 # --- Столбец 1: Выбранные (Чекбокс по центру) ---
@@ -397,11 +408,12 @@ class MainWindow(QMainWindow):
                 color_layout.addWidget(btn_color)
                 # Используем setCellWidget вместо setItem!
                 self.ui.tbl_parts.setCellWidget(row, 5, color_container)
-                self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem("STL"))
-                self.ui.tbl_parts.setItem(row, 7, QTableWidgetItem(filename))
+                # Убрали "STL", а название сдвинули на индекс 6
+                self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem(filename))
 
                 self.ui.lbl_part_count.setText(f"Кол-во деталей: {self.ui.tbl_parts.rowCount()}")
                 self.log("✅ Деталь успешно импортирована в сцену слайсера.")
+                self.update_info_combobox()
             except Exception as e:
                 self.log(f"[!] Ошибка при импорте детали: {str(e)}")
 
@@ -416,6 +428,7 @@ class MainWindow(QMainWindow):
         self.ui.tbl_parts.setRowCount(0)
         self.ui.lbl_part_count.setText("Кол-во деталей: 0")
         self.log("\n[i] Детали выгружены, сцена слайсера очищена.")
+        self.update_info_combobox()
 
     def save_selected_slicer_parts(self):
         """Сохраняет выбранные галочкой детали из слайсера в STL"""
@@ -466,12 +479,10 @@ class MainWindow(QMainWindow):
             # Если снята, полностью прячем со сцены
             self._apply_part_display_mode(row, "hide", sync_visible_checkbox=False)
 
-    def on_slicer_part_selection_changed(self):
-        """Центрирует камеру и ось вращения на выбранной в таблице детали"""
-        if not getattr(self.ui, 'slicer_plotter', None) or not self.ui.tbl_parts.selectedItems():
+    # Добавляем row и column в аргументы
+    def on_slicer_part_selection_changed(self, row, column):
+        if not getattr(self.ui, 'slicer_plotter', None):
             return
-
-        row = self.ui.tbl_parts.currentRow()
 
         if 0 <= row < len(self.slicer_parts):
             actor_name = self.slicer_parts[row]["actor_name"]
@@ -623,14 +634,29 @@ class MainWindow(QMainWindow):
             pass  # это и есть "нейтральное" состояние, заданное выше
 
         elif mode_key == "triangles":
-            # --- Треугольники: та же поверхность, но БЕЗ сглаживания нормалей -
-            # каждая треугольная грань меша видна отдельной плоской фасеткой ---
+            # --- Треугольники: цель режима - максимально четко показать саму триангуляцию
+            # меша. Одного "плоского" (без сглаживания) освещения для этого недостаточно:
+            # на гладко изогнутых поверхностях разница между плоским и сглаженным
+            # освещением на глаз почти не заметна, и режим выглядел просто как обычная
+            # заливка без каркаса (жалоба пользователя на скриншоте). Поэтому явно
+            # включаем еще и черные ребра поверх плоского освещения - тогда треугольники
+            # видно однозначно, при любом ракурсе и масштабе ---
             prop.SetInterpolationToFlat()
-
-        elif mode_key == "shaded_wire":
-            # --- Затенение и каркас: закрашенная поверхность + поверх видны ребра треугольников ---
             prop.SetEdgeVisibility(True)
             prop.SetEdgeColor(0.0, 0.0, 0.0)
+            prop.SetLineWidth(1.0)
+
+        elif mode_key == "shaded_wire":
+            # --- Затенение и каркас: закрашенная поверхность (гладкое, сглаженное
+            # освещение - см. "нейтральный сброс" выше) + поверх видны ребра сетки.
+            # Ребра нарочно СЕРЫЕ, а не черные, и с тонкой линией: на мелкой триангуляции
+            # (много маленьких треугольников на изогнутых поверхностях) черные ребра
+            # заливают собой всю поверхность и заливку не видно вообще - выглядит как
+            # режим "Треугольники", а не как "затенение + легкий каркас поверх" (жалоба
+            # пользователя на скриншоте). Серый цвет держит акцент на самой заливке. ---
+            prop.SetEdgeVisibility(True)
+            prop.SetEdgeColor(0.4, 0.4, 0.4)
+            prop.SetLineWidth(1.0)
 
         elif mode_key == "wireframe":
             # --- Каркас: только ребра сетки, без закрашенных граней ---
@@ -760,6 +786,88 @@ class MainWindow(QMainWindow):
             actor.GetProperty().SetColor(color.redF(), color.greenF(), color.blueF())
 
             plotter.render()
+
+    def on_slicer_part_double_clicked(self, row, column):
+        """Включает редактор текста только при двойном клике по названию"""
+        # Индекс 6 - это наша колонка "Название"
+        if column == 6:
+            item = self.ui.tbl_parts.item(row, column)
+            if item:
+                # Вручную форсируем открытие поля ввода
+                self.ui.tbl_parts.editItem(item)
+
+    def on_slicer_part_name_changed(self, row, column):
+        """Синхронизирует новое имя в таблице с внутренней памятью программы"""
+        # Чтобы при сохранении проекта деталь не сохранялась под старым именем
+        if column == 6 and 0 <= row < len(self.slicer_parts):
+            item = self.ui.tbl_parts.item(row, column)
+            if item:
+                self.slicer_parts[row]["filename"] = item.text()
+                self.update_info_combobox()
+
+    def update_info_combobox(self):
+        """Обновляет выпадающий список во вкладке 'Информация о детали'"""
+        self.ui.cb_info_name.blockSignals(True)
+        self.ui.cb_info_name.clear()
+        for part in self.slicer_parts:
+            self.ui.cb_info_name.addItem(part["filename"])
+        self.ui.cb_info_name.blockSignals(False)
+
+        # Если детали есть, принудительно обновляем данные для первой (или текущей)
+        if self.slicer_parts:
+            self.update_part_info_tab(self.ui.cb_info_name.currentIndex())
+        else:
+            self.update_part_info_tab(-1)
+
+    def select_next_part_info(self):
+        """Кнопка 'Далее' циклично переключает детали в комбобоксе"""
+        count = self.ui.cb_info_name.count()
+        if count > 0:
+            next_idx = (self.ui.cb_info_name.currentIndex() + 1) % count
+            self.ui.cb_info_name.setCurrentIndex(next_idx)
+
+    def update_part_info_tab(self, index):
+        """Считает математику (Trimesh) и заполняет вкладку Информации"""
+        if index < 0 or index >= len(self.slicer_parts):
+            # Очистка полей, если нет деталей
+            for i in range(3):
+                self.ui.le_dim_min[i].setText("0.000")
+                self.ui.le_dim_max[i].setText("0.000")
+                self.ui.le_dim_delta[i].setText("0.000")
+            self.ui.le_tris.setText("0")
+            self.ui.le_pts.setText("0")
+            self.ui.le_vol.setText("0.000")
+            self.ui.le_area.setText("0.000")
+            return
+
+        # Берем оригинальный меш из памяти
+        mesh = self.slicer_parts[index]["mesh"]
+
+        # 1. Считаем габариты (Bounding Box)
+        # bounds возвращает [[min_x, min_y, min_z], [max_x, max_y, max_z]]
+        bounds = mesh.bounds
+        for i in range(3):
+            val_min = bounds[0][i]
+            val_max = bounds[1][i]
+            delta = val_max - val_min
+
+            # Форматируем до 3 знаков после запятой (как принято в ЧПУ и САПР)
+            self.ui.le_dim_min[i].setText(f"{val_min:.3f}")
+            self.ui.le_dim_max[i].setText(f"{val_max:.3f}")
+            self.ui.le_dim_delta[i].setText(f"{delta:.3f}")
+
+        # 2. Считаем топологию
+        self.ui.le_tris.setText(str(len(mesh.faces)))
+        self.ui.le_pts.setText(str(len(mesh.vertices)))
+
+        # 3. Считаем параметры (Массовые характеристики)
+        # Trimesh может ругаться на объем, если деталь не watertight (с дырками),
+        # но обычно для печатных STL моделей он считает его идеально.
+        volume = mesh.volume if mesh.is_watertight else 0.0
+        area = mesh.area
+
+        self.ui.le_vol.setText(f"{volume:.3f}")
+        self.ui.le_area.setText(f"{area:.3f}")
 
     def start_pick_cad(self):
         if not self.cad_mesh: return self.log("[!] Сначала загрузите CAD!")

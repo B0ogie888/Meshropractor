@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QToolBar, QStyle, QMainWindow,
                                QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog,
                                QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox,
-                               QFrame)
+                               QFrame, QAbstractItemView, QStyledItemDelegate)
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
@@ -56,6 +56,47 @@ class CollapsibleBox(QWidget):
             self.toggle_button.setText(title.replace("▼", "▶"))
         else:
             self.toggle_button.setText(title.replace("▶", "▼"))
+
+        # --- УМНОЕ РАСШИРЕНИЕ ---
+        # Если панель открыта (not checked), она забирает всё свободное место (stretch=1)
+        # Если закрыта, отдаёт место другим (stretch=0)
+        parent = self.parentWidget()
+        if parent and parent.layout():
+            parent.layout().setStretchFactor(self, 0 if checked else 1)
+
+
+class NoEditTableWidget(QTableWidget):
+    """QTableWidget с гарантированно отключенным редактированием ячеек.
+
+    setEditTriggers(NoEditTriggers), выставленный на обычном QTableWidget,
+    управляет только тем, ПОБУЖДАЕТ ли конкретное действие (клик/двойной клик/
+    клавиша) начать редактирование - это настройка уровня экземпляра, и в редких
+    случаях (нестандартные пути входа в редактирование в самом Qt/стиле) она может
+    не сработать. Здесь же редактирование запрещено на уровне САМОГО МЕТОДА edit() -
+    он всегда возвращает False, поэтому редактор не может открыться в принципе,
+    независимо от того, что именно попытается его вызвать.
+    """
+    def edit(self, index, trigger=None, event=None):
+        return False
+
+
+class NoFocusDelegate(QStyledItemDelegate):
+    """Делегат, который полностью блокирует визуальное выделение и фокус"""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+
+        # 1. Отбираем у ячейки состояние "в фокусе" (убивает белые рамки)
+        if option.state & QStyle.State_HasFocus:
+            option.state &= ~QStyle.State_HasFocus
+
+        # 2. Отбираем состояние "выделено" (УБИВАЕТ СИНИЕ ПОЛОСКИ и сглаживание шрифта)
+        # Для движка отрисовки ячейка теперь ВСЕГДА выглядит как обычная невыделенная
+        if option.state & QStyle.State_Selected:
+            option.state &= ~QStyle.State_Selected
+
+        # Для абсолютной надежности принудительно делаем шрифт обычным
+        option.font.setBold(False)
 
 class Ui_MainWindow(object):
     """Класс, который отвечает ТОЛЬКО за внешний вид программы"""
@@ -386,12 +427,49 @@ class Ui_MainWindow(object):
                     QTabWidget::pane { border: 1px solid #444; background-color: #333; }
                     QTabBar::tab { background-color: #222; color: #aaa; padding: 4px 10px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
                     QTabBar::tab:selected { background-color: #333; color: white; font-weight: bold; border-top: 2px solid #b31b1b; }
-                    QTableWidget { background-color: #2a2a2a; color: white; border: 1px solid #444; gridline-color: #444; font-size: 11px; }
+                    QTableWidget { 
+                        background-color: #2b2b2b; 
+                        color: #e0e0e0; 
+                        gridline-color: #444444; 
+                        border: 1px solid #444444; 
+                        selection-background-color: transparent; /* Убивает серый фон выделения всей строки */
+                        selection-color: #e0e0e0;                /* Жестко фиксирует цвет (шрифт перестанет "жирнеть") */
+                        outline: none;                           /* Добивает остатки рамок */
+                    }
+                    QTableWidget::item:hover { background-color: transparent; }
+                    QTableWidget::item:focus { outline: none; }
+                    QTableWidget::item:selected {
+                        background-color: transparent; /* Убирает серую подсветку выделения */
+                        color: #e0e0e0;                /* Фиксируем цвет текста */
+                        border: none;                  /* Убивает синюю системную полоску */
+                        outline: none;                 /* Убивает пунктирную рамку */
+                        font-weight: normal;           /* Запрещает шрифту "жирнеть" */
+                    }
+
+                    QTableWidget::item:selected:active {
+                        background-color: transparent; 
+                        color: #e0e0e0;
+                        border: none;
+                    }
                     QHeaderView::section { background-color: #333; color: white; border: 1px solid #444; padding: 2px; font-size: 11px; }
                     QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 4px 8px; border-radius: 2px; font-weight: normal; }
                     QPushButton:hover { background-color: #555; border: 1px solid #777; }
                     QComboBox { background-color: #333; color: white; border: 1px solid #555; padding: 3px; }
-
+                    /* --- СТИЛЬ ДЛЯ ПОЛЯ ВВОДА (РЕДАКТИРОВАНИЕ НАЗВАНИЯ) --- */
+                    QLineEdit { 
+                        background-color: #222222; 
+                        color: #ffffff; 
+                        border: 1px solid #5dade2; /* Аккуратная синяя рамка фокуса */
+                        padding: 0 4px;
+                    }
+                    
+                    /* Стиль для полей "только для чтения" */
+                    QLineEdit[readOnly="true"] {
+                        background-color: #333333;
+                        color: #aaaaaa;
+                        border: 1px solid #444444;
+                    }
+                    
                     /* Стилизуем чекбоксы внутри таблицы: центрируем через выравнивание ячейки
                        (см. setTextAlignment(Qt.AlignCenter) на самом item), БЕЗ жесткого сдвига -
                        margin-left фиксированной величиной "уезжал" за пределы узких колонок
@@ -430,7 +508,6 @@ class Ui_MainWindow(object):
         tbl_sec.setHorizontalHeaderLabels(["Активно", "Тип", "Отсечь", "Цвет", "Позиция", "Шаг"])
         tbl_sec.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         tbl_sec.verticalHeader().setVisible(False)
-        tbl_sec.setFixedHeight(120)
         lo_sec.addWidget(tbl_sec)
         h_sec = QHBoxLayout()
         h_sec.addWidget(QPushButton("Указать"))
@@ -441,7 +518,7 @@ class Ui_MainWindow(object):
         tabs_disp.addTab(tab_sec, "Сечения")
         tabs_disp.addTab(QWidget(), "Срезы")
         grp_disp.content_layout.addWidget(tabs_disp)
-        layout.addWidget(grp_disp)
+        layout.addWidget(grp_disp, stretch=1)
 
         # --- 2. Детали ---
         grp_parts = CollapsibleBox("▼ Детали")
@@ -460,34 +537,118 @@ class Ui_MainWindow(object):
         lo_list.addLayout(h_list_top)
 
         # 2. Сделали таблицу доступной и пустой по умолчанию (0 строк)
-        self.tbl_parts = QTableWidget(0, 8)
+        self.tbl_parts = QTableWidget(0, 7)
         self.tbl_parts.setHorizontalHeaderLabels(
-            ["#", "Выбранные ▾", "Видимые", "Затенение", "Прозр.", "Цвет", "Способ", "Название"])
+            ["#", "Выбранные ▾", "Видимые", "Затенение", "Прозр.", "Цвет", "Название"])
 
-        # Включаем интерактивный режим (позволяет пользователю таскать границы столбцов)
         self.tbl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.tbl_parts.horizontalHeader().setStretchLastSection(True)  # Название всегда заполняет остаток справа
+        self.tbl_parts.horizontalHeader().setStretchLastSection(True)
 
-        # Задаем комфортную стартовую ширину для каждого столбца в пикселях
-        self.tbl_parts.horizontalHeader().resizeSection(0, 25)  # #
-        self.tbl_parts.horizontalHeader().resizeSection(1, 85)  # Выбранные ▾
-        self.tbl_parts.horizontalHeader().resizeSection(2, 70)  # Видимые
-        self.tbl_parts.horizontalHeader().resizeSection(3, 70)  # Затенение
-        self.tbl_parts.horizontalHeader().resizeSection(4, 50)  # Прозр.
-        self.tbl_parts.horizontalHeader().resizeSection(5, 50)  # Цвет
-        self.tbl_parts.horizontalHeader().resizeSection(6, 50)  # Способ
+        self.tbl_parts.horizontalHeader().resizeSection(0, 25)
+        self.tbl_parts.horizontalHeader().resizeSection(1, 85)
+        self.tbl_parts.horizontalHeader().resizeSection(2, 70)
+        self.tbl_parts.horizontalHeader().resizeSection(3, 70)
+        self.tbl_parts.horizontalHeader().resizeSection(4, 50)
+        self.tbl_parts.horizontalHeader().resizeSection(5, 50)
 
         self.tbl_parts.verticalHeader().setVisible(False)
-        self.tbl_parts.setFixedHeight(100)
         self.tbl_parts.setSelectionBehavior(QTableWidget.SelectRows)  # Выделение строки целиком
+        # --- ФИНАЛЬНЫЙ УДАР: Полностью запрещаем выделение строк ---
+        self.tbl_parts.setSelectionMode(QAbstractItemView.NoSelection)
+        # --- ИСПРАВЛЕНИЕ БАГА: Убиваем синие полоски и белые рамки фокуса ---
+        self.tbl_parts.setFocusPolicy(Qt.NoFocus)
+        # --- ИСПРАВЛЕНИЕ БАГА (продолжение): предыдущие два фикса выше (стили :selected
+        # и setFocusPolicy) лечат подсветку/фокус САМОЙ ячейки, но не помогали, потому что
+        # реальная причина "жирного/крупного текста + синей полоски" была в другом: клик по
+        # ячейке "Название" переводил ее в режим РЕДАКТИРОВАНИЯ - поверх ячейки всплывал
+        # отдельный виджет QLineEdit со своим системным шрифтом и своей стандартной синей
+        # подсветкой выделения текста, которые стилям таблицы (dark_style) не подчиняются
+        # вообще, т.к. это другой виджет. Редактирование названия детали инлайн в этой
+        # таблице не используется как функция - поэтому просто отключаем его целиком.
+        # NoEditTriggers запрещает редактирование на уровне "что считать поводом его начать",
+        # а класс NoEditTableWidget (см. выше) дополнительно запрещает его на уровне самого
+        # метода edit() - редактор не откроется в принципе, каким бы путем его ни попытались
+        # вызвать (одного NoEditTriggers на практике оказалось недостаточно, отсюда и вторая,
+        # более жесткая защита).
+        self.tbl_parts.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # --- ФИНАЛЬНОЕ УБИЙСТВО СИНИХ РАМОК И ЖИРНОГО ШРИФТА ---
+        self.tbl_parts.setItemDelegate(NoFocusDelegate(self.tbl_parts))
         lo_list.addWidget(self.tbl_parts)
 
-        lo_list.addWidget(QLabel("🔧 👁 📋 ❌ 🔄 (Инструменты работы с деталью)", styleSheet="color: white;"))
         tabs_parts.addTab(tab_list, "Список деталей")
-        tabs_parts.addTab(QWidget(), "Информация о детали")
+        # === ВКЛАДКА "ИНФОРМАЦИЯ О ДЕТАЛИ" ===
+        tab_info = QWidget()
+        lo_info = QVBoxLayout(tab_info)
+        lo_info.setSpacing(10)
+
+        # 1. Верхняя панель (Выбор детали)
+        h_info_top = QHBoxLayout()
+        h_info_top.addWidget(QLabel("Название детали"))
+        self.cb_info_name = QComboBox()
+        self.cb_info_name.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        h_info_top.addWidget(self.cb_info_name, stretch=1)
+        self.btn_info_next = QPushButton("Далее")
+        h_info_top.addWidget(self.btn_info_next)
+        lo_info.addLayout(h_info_top)
+
+        # Вспомогательная функция для создания нередактируемых полей
+        def make_ro_line():
+            le = QLineEdit("0.000")
+            le.setReadOnly(True)
+            le.setAlignment(Qt.AlignRight)
+            return le
+
+        # 2. Группа "Размеры" (Bounding Box)
+        grp_dim = QGroupBox("Размеры")
+        grid_dim = QGridLayout(grp_dim)
+        grid_dim.addWidget(QLabel("Мин"), 0, 1)
+        grid_dim.addWidget(QLabel("Макс"), 0, 2)
+        grid_dim.addWidget(QLabel("Дельта"), 0, 3)
+
+        self.le_dim_min = [make_ro_line(), make_ro_line(), make_ro_line()]
+        self.le_dim_max = [make_ro_line(), make_ro_line(), make_ro_line()]
+        self.le_dim_delta = [make_ro_line(), make_ro_line(), make_ro_line()]
+
+        for i, axis in enumerate(["X", "Y", "Z"]):
+            grid_dim.addWidget(QLabel(axis), i + 1, 0)
+            grid_dim.addWidget(self.le_dim_min[i], i + 1, 1)
+            grid_dim.addWidget(self.le_dim_max[i], i + 1, 2)
+            grid_dim.addWidget(self.le_dim_delta[i], i + 1, 3)
+            grid_dim.addWidget(QLabel("мм"), i + 1, 4)
+        lo_info.addWidget(grp_dim)
+
+        # 3. Группа "Информация о поверхности"
+        grp_surf = QGroupBox("Информация о поверхности")
+        grid_surf = QGridLayout(grp_surf)
+        self.le_tris = make_ro_line();
+        self.le_tris.setText("0")
+        self.le_pts = make_ro_line();
+        self.le_pts.setText("0")
+        grid_surf.addWidget(QLabel("# Треугольников"), 0, 0)
+        grid_surf.addWidget(self.le_tris, 0, 1)
+        grid_surf.addWidget(QLabel("# Точек"), 0, 2)
+        grid_surf.addWidget(self.le_pts, 0, 3)
+        lo_info.addWidget(grp_surf)
+
+        # 4. Группа "Параметры" (Объем и площадь)
+        grp_params = QGroupBox("Параметры")
+        grid_params = QGridLayout(grp_params)
+        self.le_vol = make_ro_line()
+        self.le_area = make_ro_line()
+        grid_params.addWidget(QLabel("Объем"), 0, 0)
+        grid_params.addWidget(self.le_vol, 0, 1)
+        grid_params.addWidget(QLabel("мм³"), 0, 2)
+        grid_params.addWidget(QLabel("Поверхность"), 1, 0)
+        grid_params.addWidget(self.le_area, 1, 1)
+        grid_params.addWidget(QLabel("мм²"), 1, 2)
+        lo_info.addWidget(grp_params)
+
+        lo_info.addStretch()
+        tabs_parts.addTab(tab_info, "Информация о детали")
+        # =====================================
         tabs_parts.addTab(QWidget(), "Сцены")
         grp_parts.content_layout.addWidget(tabs_parts)
-        layout.addWidget(grp_parts)
+        layout.addWidget(grp_parts, stretch=1)
 
         # --- 3. Заметки ---
         grp_notes = CollapsibleBox("▼ Заметки")
@@ -497,7 +658,7 @@ class Ui_MainWindow(object):
         tabs_notes.addTab(QWidget(), "Приложения")
         tabs_notes.addTab(QWidget(), "Текстуры")
         grp_notes.content_layout.addWidget(tabs_notes)
-        layout.addWidget(grp_notes)
+        layout.addWidget(grp_notes, stretch=1)
 
         # --- 4. Измерения ---
         grp_meas = CollapsibleBox("▼ Измерения")
@@ -518,7 +679,7 @@ class Ui_MainWindow(object):
         tabs_meas.addTab(tab_dist, "Расстояние")
         tabs_meas.addTab(QWidget(), "Угол")
         grp_meas.content_layout.addWidget(tabs_meas)
-        layout.addWidget(grp_meas)
+        layout.addWidget(grp_meas, stretch=1)
 
         # --- 5. Исправления деталей (ВОССТАНОВЛЕНО) ---
         grp_fix = CollapsibleBox("▼ Исправления деталей")
@@ -531,7 +692,7 @@ class Ui_MainWindow(object):
         tabs_fix.addTab(QWidget(), "Нахлёсты")
         tabs_fix.addTab(QWidget(), "Точки")
         grp_fix.content_layout.addWidget(tabs_fix)
-        layout.addWidget(grp_fix)
+        layout.addWidget(grp_fix, stretch=1)
 
         layout.addStretch()
         scroll.setWidget(content)
