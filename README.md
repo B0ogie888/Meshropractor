@@ -82,12 +82,15 @@ The program requires Python version 3.10 or higher to run.
 
 The program uses the official **PySide6** port (LGPL license), making it possible to use this software in closed commercial processes without the need to purchase commercial keys. The mathematical core is built on open-source libraries (MIT/BSD).
 
-## 💰 Support the author
+## 💰 Support the Author
+It's hard being a design engineer nowadays... Sleepless nights before deadlines, liters of energy drinks, the eternal struggle with tolerances, and the attempts to fit a distorted optical scan onto a perfect CAD model.
 
-It's tough being a design engineer these days... Sleepless nights before deadlines, liters of energy drinks, the constant struggle with tolerances, and attempts to fit a crooked optical scan onto a perfect CAD model.
+If this program has saved you a couple of hours of sleep, some nerve cells, or prevented a whole batch of parts from becoming manufacturing scrap — I would highly appreciate your support! Your help converts directly into caffeine, which fuels the release of new features and algorithm improvements.
 
-If this program has saved you a couple of hours of sleep, a lot of nerves, or prevented an entire batch of parts from being defective at the factory, I'd be grateful for your support! Every penny will go toward the development of useful software.
+☕ **[Support the project on Boosty](https://boosty.to/boogie888)**
 
-* **Bank card details:** 2200 1509 5905 0136
+<a href="https://boosty.to/boogie888">
+  <img src="assets/qr_donate.png" alt="Donate QR-code" width="180">
+</a>
 
-📬 Suggestions for improvement and bug reports: <theboogie888@gmail.com>
+📬 Feature requests and bug reports: <theboogie888@gmail.com>

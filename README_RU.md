@@ -71,15 +71,15 @@
 ## 👨‍💻 Лицензия и Юридическая информация
 Программа использует официальный порт **PySide6** (LGPL лицензия), что делает возможным использование данного софта в закрытых коммерческих процессах без необходимости покупать коммерческие ключи. Математическое ядро построено на открытых библиотеках (MIT / BSD).
 
-## 💰 Support the Author
-It's hard being a design engineer nowadays... Sleepless nights before deadlines, liters of energy drinks, the eternal struggle with tolerances, and the attempts to fit a distorted optical scan onto a perfect CAD model.
+## 💰 Поддержка автора
+Тяжело быть инженером-конструктором в наше время... Бессонные ночи перед дедлайнами, литры выпитого энергетика, вечная борьба с допусками и попытки натянуть кривой оптический скан на идеальную CAD-модель.
 
-If this program has saved you a couple of hours of sleep, some nerve cells, or prevented a whole batch of parts from becoming manufacturing scrap — I would highly appreciate your support! Your help converts directly into caffeine, which fuels the release of new features and algorithm improvements.
+Если эта программа сэкономила вам пару часов сна, нервные клетки или уберегла целую партию деталей от брака на производстве — буду рад вашей поддержке! Ваша помощь конвертируется в кофеин, который напрямую влияет на скорость выхода новых фич и улучшение алгоритмов. 
 
-☕ **[Support the project on Boosty](https://boosty.to/boogie888)**
+☕ **[Поддержать проект на Boosty](https://boosty.to/boogie888)**
 
 <a href="https://boosty.to/boogie888">
-  <img src="assets/qr_donate.png" alt="Donate QR-code" width="180">
+  <img src="assets/qr_donate.png" alt="QR-код для поддержки" width="180">
 </a>
 
-📬 Feature requests and bug reports: <theboogie888@gmail.com>
+📬 Предложения по улучшению и баг-репорты: <theboogie888@gmail.com>
