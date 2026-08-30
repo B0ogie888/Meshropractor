@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self.ui.btn_new_project.clicked.connect(self.action_new_project)
         self.ui.btn_open_project.clicked.connect(self.action_open_project)
         self.ui.btn_recent_projects.clicked.connect(self.open_recent_gallery)
+        self.ui.btn_donate.clicked.connect(self.action_show_donate)
         self.ui.btn_back_to_start.clicked.connect(lambda: self.ui.stack.setCurrentWidget(self.ui.page_start))
 
         self.ui.tree.itemChanged.connect(self.on_tree_visibility_changed)
@@ -1214,6 +1215,12 @@ class MainWindow(QMainWindow):
             self.log("[!] ОШИБКА: Файл поврежден или не является архивом .mrp")
         except Exception as e:
             self.log(f"[!] Ошибка: {str(e)}")
+
+    def action_show_donate(self):
+        # Импортируем наше новое окно
+        from UI_Meshropractor import DialogDonate
+        dialog = DialogDonate(self)
+        dialog.exec()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

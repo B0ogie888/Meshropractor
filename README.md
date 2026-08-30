@@ -10,6 +10,8 @@ The program allows you to upload a CAD model, overlay an optical scan of the res
 ![Open3D](https://img.shields.io/badge/Engine-Open3D%20C%2B%2B-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)
 
+📖 [Changelog](CHANGELOG.md)
+
 ## Main use cases
 
 * **Metal 3D printing (SLM/DMLS):** Compensation for temperature fluctuations and internal stresses when printing complex geometries and heat-resistant alloys.

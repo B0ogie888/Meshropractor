@@ -325,10 +325,12 @@ class Ui_MainWindow(object):
         self.btn_new_project = self.create_big_button("📄", "Новый проект")
         self.btn_open_project = self.create_big_button("📂", "Открыть проект")
         self.btn_recent_projects = self.create_big_button("🕒", "Недавно использованные\nпроекты")
+        self.btn_donate = self.create_big_button("☕", "Поддержать\nавтора")  # <-- Новая кнопка
 
         grid.addWidget(self.btn_new_project, 0, 0)
         grid.addWidget(self.btn_open_project, 0, 1)
-        grid.addWidget(self.btn_recent_projects, 0, 2)
+        grid.addWidget(self.btn_recent_projects, 1, 0)
+        grid.addWidget(self.btn_donate, 1, 1)  # <-- Ставим её в правый нижний угол
 
         main_layout.addLayout(grid)
         return page
@@ -769,10 +771,6 @@ class Ui_MainWindow(object):
         self.initCompTab()
         self.tabs.addTab(self.tab_comp, "Шаг 2: Компенсация (RBF)")
 
-        self.tab_donate = QWidget()
-        self.initDonateTab()
-        self.tabs.addTab(self.tab_donate, "💰 Поддержка автора")
-
         self.right_layout.addWidget(self.tabs, stretch=6)
 
         # === ПАНЕЛЬ СЛОЕВ ===
@@ -997,36 +995,6 @@ class Ui_MainWindow(object):
         self.btn_save.setEnabled(False)
         l.addWidget(self.btn_save)
 
-    def initDonateTab(self):
-        l = QVBoxLayout(self.tab_donate)
-        l.setAlignment(Qt.AlignCenter)
-
-        lbl_story = QLabel(
-            "Тяжело быть инженером-конструктором в наше время...\n\nБессонные ночи перед дедлайнами, литры выпитого кофе...")
-        lbl_story.setAlignment(Qt.AlignCenter)
-        lbl_story.setStyleSheet("font-size: 14px; font-style: italic; color: #E0E0E0; margin-bottom: 10px;")
-        l.addWidget(lbl_story)
-
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
-        img_path = os.path.join(base_path, "assets", "f.jpeg")
-        lbl_img = QLabel()
-        pixmap = QPixmap(img_path)
-
-        if not pixmap.isNull():
-            lbl_img.setPixmap(pixmap.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            lbl_img.setText(f"[Картинка не найдена:\n{img_path}]")
-            lbl_img.setStyleSheet("color: #ff4444; font-weight: bold;")
-
-        lbl_img.setAlignment(Qt.AlignCenter)
-        l.addWidget(lbl_img)
-
-        lbl_card = QLabel("💳 Реквизиты карты: <b style='font-size: 20px; color: #ff6b6b;'>2200150959050136</b>")
-        lbl_card.setAlignment(Qt.AlignCenter)
-        lbl_card.setStyleSheet("margin-top: 15px; color: white;")
-        lbl_card.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        l.addWidget(lbl_card)
-
     def init_recent_page(self):
         page = QWidget()
         page.setStyleSheet("background-color: #f4f4f4;")
@@ -1232,3 +1200,83 @@ class DialogNewProject(QDialog):
     def set_mode(self, mode):
         self.selected_mode = mode
         self.accept()
+
+
+class DialogDonate(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("О программе / Поддержка")
+        # Делаем окно более компактным и вертикальным
+        self.setFixedSize(350, 480)
+
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        logo_path = os.path.join(base_path, "assets", "logo.png")
+        self.setWindowIcon(QIcon(logo_path))
+
+        self.setStyleSheet("""
+            QDialog { background-color: #2b2b2b; color: white; }
+            QLabel { color: #e0e0e0; font-size: 14px; }
+            QPushButton { background-color: #b31b1b; border: none; border-radius: 5px; color: white; font-size: 14px; font-weight: bold; padding: 8px 15px; }
+            QPushButton:hover { background-color: #e74c3c; }
+            QPushButton:pressed { background-color: #8e1515; }
+            /* Стилизуем кликабельную ссылку на GitHub */
+            QLabel a { color: #5dade2; text-decoration: none; }
+            QLabel a:hover { text-decoration: underline; color: #85c1e9; }
+        """)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setAlignment(Qt.AlignCenter)
+        main_layout.setSpacing(15)
+
+        # 1. Логотип программы сверху
+        lbl_logo = QLabel()
+        pixmap = QPixmap(logo_path)
+        if not pixmap.isNull():
+            lbl_logo.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        lbl_logo.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(lbl_logo)
+
+        # 2. Название и авторство
+        lbl_author = QLabel("<b>Meshropractor</b><br>Автор: B0ogie888")
+        lbl_author.setAlignment(Qt.AlignCenter)
+        lbl_author.setStyleSheet("font-size: 18px;")
+        main_layout.addWidget(lbl_author)
+
+        # 3. Кликабельная ссылка на GitHub
+        lbl_github = QLabel(
+            "<a href='https://github.com/B0ogie888/Meshropractor'>Официальный репозиторий на GitHub</a>")
+        lbl_github.setOpenExternalLinks(True)  # Открывать браузер при клике
+        lbl_github.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(lbl_github)
+
+        main_layout.addSpacing(15)
+
+        # 4. Текст благодарности
+        lbl_thanks = QLabel("Буду рад любой поддержке<br>на развитие проекта!")
+        lbl_thanks.setAlignment(Qt.AlignCenter)
+        lbl_thanks.setStyleSheet("font-weight: bold; font-size: 14px;")
+        main_layout.addWidget(lbl_thanks)
+
+        # 5. QR-код Boosty
+        qr_path = os.path.join(base_path, "assets", "qr_donate.png")
+        lbl_qr = QLabel()
+        qr_pixmap = QPixmap(qr_path)
+        if not qr_pixmap.isNull():
+            lbl_qr.setPixmap(qr_pixmap.scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            # Заглушка, если картинка не найдется
+            lbl_qr.setText("[QR-код Boosty]")
+            lbl_qr.setStyleSheet("background-color: white; color: black; border: 2px dashed #777; font-weight: bold;")
+            lbl_qr.setFixedSize(180, 180)
+
+        lbl_qr.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(lbl_qr, 0, Qt.AlignCenter)
+
+        main_layout.addSpacing(10)
+
+        # 6. Кнопка закрытия
+        self.btn_close = QPushButton("Закрыть")
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setFixedSize(120, 35)
+        self.btn_close.clicked.connect(self.accept)
+        main_layout.addWidget(self.btn_close, 0, Qt.AlignCenter)

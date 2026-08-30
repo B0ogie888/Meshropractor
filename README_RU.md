@@ -8,6 +8,8 @@
 ![Open3D](https://img.shields.io/badge/Engine-Open3D%20C%2B%2B-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)
 
+📖 [История изменений](CHANGELOG.md)
+
 ## 💡 Основные сценарии использования
 * **Металлическая 3D-печать (SLM/DMLS):** Компенсация температурных поводок и внутренних напряжений при печати сложных геометрий и жаропрочных сплавов.
 * **Литье и фрезеровка:** Учет усадки материала и корректировка пресс-форм.
@@ -69,10 +71,15 @@
 ## 👨‍💻 Лицензия и Юридическая информация
 Программа использует официальный порт **PySide6** (LGPL лицензия), что делает возможным использование данного софта в закрытых коммерческих процессах без необходимости покупать коммерческие ключи. Математическое ядро построено на открытых библиотеках (MIT / BSD).
 
-## 💰 Поддержка автора
-Тяжело быть инженером-конструктором в наше время... Бессонные ночи перед дедлайнами, литры выпитого энергетика, вечная борьба с допусками и попытки натянуть кривой оптический скан на идеальную CAD-модель.
+## 💰 Support the Author
+It's hard being a design engineer nowadays... Sleepless nights before deadlines, liters of energy drinks, the eternal struggle with tolerances, and the attempts to fit a distorted optical scan onto a perfect CAD model.
 
-Если эта программа сэкономила вам пару часов сна, нервные клетки или уберегла целую партию деталей от брака на производстве — буду рад вашей поддержке! Любая копеечка пойдет на развитие полезного софта.
-* **Реквизиты карты:** 2200 1509 5905 0136
+If this program has saved you a couple of hours of sleep, some nerve cells, or prevented a whole batch of parts from becoming manufacturing scrap — I would highly appreciate your support! Your help converts directly into caffeine, which fuels the release of new features and algorithm improvements.
 
-📬 Предложения по улучшению и баг-репорты: <theboogie888@gmail.com>
+☕ **[Support the project on Boosty](https://boosty.to/boogie888)**
+
+<a href="https://boosty.to/boogie888">
+  <img src="assets/qr_donate.png" alt="Donate QR-code" width="180">
+</a>
+
+📬 Feature requests and bug reports: <theboogie888@gmail.com>
