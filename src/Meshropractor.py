@@ -13,6 +13,13 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDial
 from PySide6.QtCore import Qt, QSettings, QSize, QEvent
 from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon, QCursor, QAction
 import pyvista as pv
+import ctypes
+# Заставляем Windows отображать иконку в панели задач (Taskbar)
+try:
+    myappid = 'b0ogie888.meshropractor.v1' # Уникальное имя приложения
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception:
+    pass
 
 from UI_Meshropractor import Ui_MainWindow
 from Workers_Meshropractor import AlignmentThread, CompensationThread, HAS_O3D
@@ -1185,12 +1192,24 @@ class MainWindow(QMainWindow):
 
             if not pixmap.isNull():
                 card.setIcon(QIcon(pixmap))
-                card.setIconSize(QSize(200, 180))
+                # УВЕЛИЧИЛИ РАЗМЕР ИКОНКИ, чтобы не было пустых мест
+                card.setIconSize(QSize(210, 200))
 
             card.setText(os.path.basename(path))
             card.clicked.connect(lambda ch=False, p=path: self.load_mrp_file(p))
-            card.setStyleSheet(
-                "QToolButton { background-color: white; border: 1px solid #ccc; border-radius: 5px; color: black; font-weight: bold;} QToolButton:hover { border: 2px solid #b31b1b; }")
+
+            # ДОБАВИЛИ PADDING для текста снизу
+            card.setStyleSheet("""
+                            QToolButton { 
+                                background-color: #333333; 
+                                border: 1px solid #555; 
+                                border-radius: 5px; 
+                                color: #e0e0e0; 
+                                font-weight: bold; 
+                                padding-bottom: 5px;
+                            } 
+                            QToolButton:hover { border: 2px solid #b31b1b; background-color: #444444; }
+                        """)
 
             self.ui.recent_layout.addWidget(card, row, col)
             col += 1
@@ -1210,10 +1229,29 @@ class MainWindow(QMainWindow):
 
         self.log(f"\n⏳ Сохранение проекта в {path}...")
         try:
-            if self.ui.plotter:
-                img_array = self.ui.plotter.screenshot(transparent_background=False)
+            # Умный выбор сцены для превью
+            active_plotter = None
+            if self.ui.stack.currentWidget() == self.ui.page_slicer:
+                active_plotter = getattr(self.ui, 'slicer_plotter', None)
+            else:
+                active_plotter = getattr(self.ui, 'plotter', None)
+
+            if active_plotter:
+                # transparent_background=True убирает белый фон!
+                img_array = active_plotter.screenshot(transparent_background=True)
                 from PIL import Image
                 img = Image.fromarray(img_array)
+
+                # --- УМНАЯ ОБРЕЗКА В ИДЕАЛЬНЫЙ КВАДРАТ ПО ЦЕНТРУ ---
+                width, height = img.size
+                new_size = min(width, height)
+                left = (width - new_size) / 2
+                top = (height - new_size) / 2
+                right = (width + new_size) / 2
+                bottom = (height + new_size) / 2
+                img = img.crop((left, top, right, bottom))
+                # --------------------------------------------------
+
                 img_byte_arr = io.BytesIO()
                 img.save(img_byte_arr, format='PNG')
                 img_bytes = img_byte_arr.getvalue()

@@ -332,7 +332,7 @@ class Ui_MainWindow(object):
 
     def init_start_page(self):
         page = QWidget()
-        page.setStyleSheet("background-color: #f4f4f4;")
+        page.setStyleSheet("background-color: #2b2b2b;") # ТЕМНЫЙ ФОН
         main_layout = QVBoxLayout(page)
         main_layout.setAlignment(Qt.AlignCenter)
 
@@ -351,7 +351,7 @@ class Ui_MainWindow(object):
         lbl_icon.setStyleSheet("padding-right: 10px;")
 
         lbl_text = QLabel("Meshropractor")
-        lbl_text.setStyleSheet("font-size: 24px; color: #333; font-weight: bold;")
+        lbl_text.setStyleSheet("font-size: 28px; color: #e0e0e0; font-weight: bold;") # СВЕТЛЫЙ ТЕКСТ
 
         title_layout.addWidget(lbl_icon)
         title_layout.addWidget(lbl_text)
@@ -387,18 +387,20 @@ class Ui_MainWindow(object):
 
         icon_lbl = QLabel(icon_text)
         icon_lbl.setAlignment(Qt.AlignCenter)
-        icon_lbl.setStyleSheet("font-size: 70px; color: #777; background: transparent; border: none;")
+        icon_lbl.setStyleSheet("font-size: 70px; color: #aaaaaa; background: transparent; border: none;") # СВЕТЛАЯ ИКОНКА
 
         text_lbl = QLabel(title)
         text_lbl.setAlignment(Qt.AlignCenter)
-        text_lbl.setStyleSheet("font-size: 16px; color: #333; background: transparent; border: none;")
+        text_lbl.setStyleSheet("font-size: 16px; color: #e0e0e0; background: transparent; border: none;") # СВЕТЛЫЙ ТЕКСТ
 
         layout.addWidget(icon_lbl)
         layout.addWidget(text_lbl)
 
+        # ТЕМНАЯ КНОПКА
         btn.setStyleSheet("""
-            QPushButton { background-color: white; border: 1px solid #cccccc; border-radius: 2px; }
-            QPushButton:hover { border: 2px solid #b31b1b; background-color: #fafafa; }
+            QPushButton { background-color: #333333; border: 1px solid #555555; border-radius: 5px; }
+            QPushButton:hover { border: 2px solid #b31b1b; background-color: #444444; }
+            QPushButton:pressed { background-color: #222222; }
         """)
         return btn
 
@@ -1148,7 +1150,7 @@ class Ui_MainWindow(object):
 
     def init_recent_page(self):
         page = QWidget()
-        page.setStyleSheet("background-color: #f4f4f4;")
+        page.setStyleSheet("background-color: #2b2b2b;") # Темный фон
         layout = QVBoxLayout(page)
 
         header_layout = QHBoxLayout()
@@ -1156,10 +1158,10 @@ class Ui_MainWindow(object):
         self.btn_back_to_start.setFixedSize(120, 40)
         self.btn_back_to_start.setCursor(Qt.PointingHandCursor)
         self.btn_back_to_start.setStyleSheet(
-            "background-color: #555; color: white; font-weight: bold; border-radius: 3px;")
+            "background-color: #444; color: white; font-weight: bold; border: 1px solid #555; border-radius: 3px;")
 
         title = QLabel(" Недавно использованные проекты")
-        title.setStyleSheet("font-size: 24px; color: #333; font-weight: bold;")
+        title.setStyleSheet("font-size: 24px; color: #e0e0e0; font-weight: bold;") # Светлый текст
 
         header_layout.addWidget(self.btn_back_to_start)
         header_layout.addWidget(title)
