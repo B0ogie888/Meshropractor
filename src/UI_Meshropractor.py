@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QToolBar, QStyle, QMainWindow,
                                QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog,
                                QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox,
-                               QFrame, QAbstractItemView, QStyledItemDelegate)
+                               QFrame, QAbstractItemView, QStyledItemDelegate, QButtonGroup)
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
@@ -198,7 +198,7 @@ class Ui_MainWindow(object):
         self.toolbar = QToolBar()
         self.toolbar.setStyleSheet("border: none;")
 
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         logo_path = os.path.join(base_path, "assets", "logo.png")
         if not os.path.exists(logo_path):
             logo_path = os.path.join(base_path, "assets", "logo.ico")
@@ -339,7 +339,7 @@ class Ui_MainWindow(object):
         title_layout = QHBoxLayout()
         title_layout.setAlignment(Qt.AlignCenter)
 
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         logo_path = os.path.join(base_path, "assets", "logo.png")
         if not os.path.exists(logo_path):
             logo_path = os.path.join(base_path, "assets", "logo.ico")
@@ -526,10 +526,10 @@ class Ui_MainWindow(object):
         tab_list = QWidget()
         lo_list = QVBoxLayout(tab_list)
         h_list_top = QHBoxLayout()
-        cb_plat = QComboBox()
-        cb_plat.addItem("M2_220x220_Magics")
-        cb_plat.setStyleSheet("background-color: #333; color: white;")
-        h_list_top.addWidget(cb_plat, stretch=1)
+        # Делаем комбобокс публичным (self) и убираем хардкод
+        self.cb_plat = QComboBox()
+        self.cb_plat.setStyleSheet("background-color: #333; color: white;")
+        h_list_top.addWidget(self.cb_plat, stretch=1)
 
         # 1. Сделали счетчик доступным извне
         self.lbl_part_count = QLabel("Кол-во деталей: 0", styleSheet="color: white;")
@@ -769,31 +769,21 @@ class Ui_MainWindow(object):
             QTabBar::tab:hover { color: #ffffff; background-color: #333333; }
         """)
 
-        # === НОВАЯ ВКАДКА "ГЛАВНАЯ" (На 1 месте) ===
+        # === ВКАДКА "ГЛАВНАЯ" (На 1 месте) ===
         self.magics_ribbon.addTab(self.create_main_ribbon_tab(), "ГЛАВНАЯ")
 
         # === ВОССТАНОВЛЕННЫЕ ОСТАЛЬНЫЕ ВКЛАДКИ ===
-        self.magics_ribbon.addTab(
-            self.create_ribbon_tab(["Создать", "Дублировать", "Пакетное\nдублирование"], "Создание"), "ИНСТРУМЕНТЫ")
-        self.magics_ribbon.addTab(
-            self.create_ribbon_tab(["Автоисправление", "Бормашина", "Отверстия", "Триксел"], "Лечение сетки"),
-            "ИСПРАВЛЕНИЕ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Создать", "Дублировать", "Пакетное\nдублирование"], "Создание"), "ИНСТРУМЕНТЫ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Автоисправление", "Бормашина", "Отверстия", "Триксел"], "Лечение сетки"), "ИСПРАВЛЕНИЕ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Текстура 1", "Текстура 2"], "Текстурирование"), "ТЕКСТУРЫ")
-        self.magics_ribbon.addTab(
-            self.create_ribbon_tab(["Перемещать", "Вращать", "Масштабировать", "Озеркалить"], "Позиционирование"),
-            "РАСПОЛОЖЕНИЕ")
-        self.magics_ribbon.addTab(
-            self.create_ribbon_tab(["Платформа M2", "Платформа Mlab", "Параметры стола"], "Оборудование"), "ПЛАТФОРМЫ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Колонны", "Решетка", "Контурные\nподдержки"], "Генерация"),
-                                  "ПОДДЕРЖКИ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Heatmap", "Сравнение", "Мин/Макс\nтолщины"], "Контроль"),
-                                  "АНАЛИЗ И ОТЧЕТЫ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Перемещать", "Вращать", "Масштабировать", "Озеркалить"], "Позиционирование"), "РАСПОЛОЖЕНИЕ")
+        # === вкладку менеджера платформ ===
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Управление\nплатформами"], "Оборудование"), "ПЛАТФОРМЫ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Колонны", "Решетка", "Контурные\nподдержки"], "Генерация"), "ПОДДЕРЖКИ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Heatmap", "Сравнение", "Мин/Макс\nтолщины"], "Контроль"), "АНАЛИЗ И ОТЧЕТЫ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Создание срезов\nConcept Laser"], "Concept Laser"), "СРЕЗЫ")
-        self.magics_ribbon.addTab(
-            self.create_ribbon_tab(["Цвет деталей", "Прозрачность", "Отображение\nсетки"], "Визуализация"),
-            "ОТОБРАЖЕНИЕ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Параметры", "Язык", "Горячие\nклавиши"], "Система"),
-                                  "НАСТРОЙКИ И ПОМОЩЬ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Цвет деталей", "Прозрачность", "Отображение\nсетки"], "Визуализация"), "ОТОБРАЖЕНИЕ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Параметры", "Язык", "Горячие\nклавиши"], "Система"), "НАСТРОЙКИ И ПОМОЩЬ")
 
         layout.addWidget(self.magics_ribbon)
 
@@ -1310,7 +1300,7 @@ class DialogNewProject(QDialog):
         self.setWindowTitle("Создание нового проекта")
         self.setFixedSize(450, 340)
 
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         logo_path = os.path.join(base_path, "assets", "logo.png")
         self.setWindowIcon(QIcon(logo_path))
 
@@ -1363,6 +1353,449 @@ class DialogNewProject(QDialog):
         self.accept()
 
 
+class DialogPlatformManager(QDialog):
+    """Менеджер платформ (список машин)"""
+
+    def __init__(self, parent=None, platforms_data=None):
+        super().__init__(parent)
+        self.setWindowTitle("Менеджер платформ")
+        self.setFixedSize(650, 400)
+
+        self.setStyleSheet("""
+            QDialog { background-color: #2b2b2b; color: #e0e0e0; }
+            QLabel { color: #e0e0e0; font-weight: bold; }
+            QTableWidget { background-color: #333333; color: white; border: 1px solid #555; gridline-color: #444; selection-background-color: #555555; outline: none; }
+            QTableWidget::item { border: none; }
+            QTableWidget::item:focus { border: none; outline: none; }
+            QTableWidget::item:selected { border: none; color: white; background-color: #555555; }
+            QHeaderView::section { background-color: #444; color: white; border: 1px solid #555; padding: 4px; font-weight: bold; }
+            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 6px 15px; border-radius: 3px; font-weight: bold; }
+            QPushButton:hover { background-color: #555; border: 1px solid #777; }
+            QPushButton:pressed { background-color: #b31b1b; }
+            QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #555; border-radius: 4px; background-color: #333; }
+            QCheckBox::indicator:hover { border: 2px solid #c0392b; }
+            QCheckBox::indicator:checked { background-color: #c0392b; border: 2px solid #c0392b; image: url(":/qt-project.org/styles/commonstyle/images/check-16.png"); }
+        """)
+
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["#", "Название", "Габариты (X×Y×Z)", "На панели"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+
+        self.table.horizontalHeader().resizeSection(0, 40)
+        self.table.horizontalHeader().resizeSection(2, 150)
+        self.table.horizontalHeader().resizeSection(3, 100)
+
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        layout.addWidget(QLabel("Доступные рабочие платформы:"))
+        layout.addWidget(self.table)
+
+        btn_layout = QHBoxLayout()
+        self.btn_add = QPushButton("Создать")
+        self.btn_edit = QPushButton("Редактировать")
+        self.btn_delete = QPushButton("Удалить")
+
+        btn_layout.addWidget(self.btn_add)
+        btn_layout.addWidget(self.btn_edit)
+        btn_layout.addWidget(self.btn_delete)
+        btn_layout.addStretch()
+
+        self.btn_apply = QPushButton("Применить")
+        self.btn_apply.setStyleSheet("background-color: #b31b1b;")
+        btn_layout.addWidget(self.btn_apply)
+
+        self.btn_close = QPushButton("Закрыть")
+        self.btn_close.clicked.connect(self.accept)
+        btn_layout.addWidget(self.btn_close)
+        layout.addLayout(btn_layout)
+
+        self.btn_add.clicked.connect(self.action_add)
+        self.btn_edit.clicked.connect(self.action_edit)
+        self.btn_delete.clicked.connect(self.action_delete)
+
+        if platforms_data:
+            for p in platforms_data:
+                self.add_platform_row(p, p.get("is_default", False))
+
+    def add_platform_row(self, plat_dict, is_default):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        item_id = QTableWidgetItem(str(row + 1))
+        item_id.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 0, item_id)
+
+        item_name = QTableWidgetItem(plat_dict["name"])
+        # ХРАНИМ ВЕСЬ СЛОВАРЬ (С ЗОНАМИ), А НЕ ТОЛЬКО DIM
+        item_name.setData(Qt.UserRole, plat_dict)
+        self.table.setItem(row, 1, item_name)
+
+        dim = plat_dict.get("dim", [220, 220, 280])
+        item_dim = QTableWidgetItem(f"{dim[0]} × {dim[1]} × {dim[2]} мм")
+        item_dim.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 2, item_dim)
+
+        cb_container = QWidget()
+        cb_layout = QHBoxLayout(cb_container)
+        cb_layout.setContentsMargins(0, 0, 0, 0)
+        cb_layout.setAlignment(Qt.AlignCenter)
+        cb = QCheckBox()
+        cb.setChecked(is_default)
+        cb.setCursor(Qt.PointingHandCursor)
+        cb_layout.addWidget(cb)
+        self.table.setCellWidget(row, 3, cb_container)
+
+    def action_add(self):
+        dialog = DialogEditPlatform(self)
+        if dialog.exec():
+            new_data = dialog.get_data()
+            self.add_platform_row(new_data, False)
+
+    def action_edit(self):
+        current_row = self.table.currentRow()
+        if current_row < 0: return
+
+        # Считываем полный словарь платформы из ячейки
+        plat_dict = self.table.item(current_row, 1).data(Qt.UserRole)
+
+        dialog = DialogEditPlatform(self, platform_data=plat_dict)
+        if dialog.exec():
+            new_data = dialog.get_data()
+            self.table.item(current_row, 1).setText(new_data["name"])
+            self.table.item(current_row, 1).setData(Qt.UserRole, new_data)
+            self.table.item(current_row, 2).setText(
+                f"{new_data['dim'][0]} × {new_data['dim'][1]} × {new_data['dim'][2]} мм")
+
+    def action_delete(self):
+        current_row = self.table.currentRow()
+        if current_row >= 0:
+            self.table.removeRow(current_row)
+
+    def get_data(self):
+        platforms = []
+        for row in range(self.table.rowCount()):
+            plat_dict = self.table.item(row, 1).data(Qt.UserRole)
+            plat_dict["name"] = self.table.item(row, 1).text()
+
+            is_default = False
+            cb_container = self.table.cellWidget(row, 3)
+            if cb_container:
+                cb = cb_container.findChild(QCheckBox)
+                if cb and cb.isChecked():
+                    is_default = True
+
+            plat_dict["is_default"] = is_default
+            platforms.append(plat_dict)
+        return platforms
+
+
+class DialogEditPlatform(QDialog):
+    """Окно создания/редактирования конкретной платформы с настройкой мертвых зон"""
+
+    def __init__(self, parent=None, platform_data=None):
+        super().__init__(parent)
+        self.setWindowTitle("Настройка платформы")
+        self.resize(650, 420)
+
+        self.zones_data = []  # Внутреннее хранилище зон
+        self.current_zone_idx = -1
+
+        self.setStyleSheet("""
+            QDialog { background-color: #2b2b2b; color: white; }
+            QLabel { color: #e0e0e0; }
+            QLineEdit { background-color: #333; color: white; border: 1px solid #555; padding: 4px; }
+            QPushButton { background-color: #444; color: white; border: 1px solid #555; padding: 6px; border-radius: 3px; }
+            QPushButton:hover { background-color: #555; border: 1px solid #777; }
+            QTabWidget::pane { border: 1px solid #444; background-color: #2b2b2b; top: -1px; }
+            QTabBar::tab { background-color: #222; color: #aaa; padding: 8px 15px; border: 1px solid #444; border-top-left-radius: 3px; border-top-right-radius: 3px; }
+            QTabBar::tab:selected { background-color: #2b2b2b; color: white; font-weight: bold; border-bottom: none; border-top: 2px solid #b31b1b; }
+            QTableWidget { background-color: #333; color: white; border: 1px solid #555; gridline-color: #444; outline: none; }
+            QTableWidget::item:focus { outline: none; }
+            QTableWidget::item:selected { background-color: #b31b1b; color: white; }
+            QComboBox { background-color: #333; color: white; border: 1px solid #555; padding: 3px; }
+            QCheckBox { color: #e0e0e0; font-weight: bold; }
+        """)
+
+        layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+
+        self.tab_general = QWidget()
+        self.init_general_tab()
+        self.tabs.addTab(self.tab_general, "Общая информация")
+
+        self.tab_zones = QWidget()
+        self.init_zones_tab()
+        self.tabs.addTab(self.tab_zones, "Запретные зоны")
+
+        layout.addWidget(self.tabs)
+
+        btn_layout = QHBoxLayout()
+        self.btn_save = QPushButton("Сохранить")
+        self.btn_save.setStyleSheet("background-color: #b31b1b; font-weight: bold; padding: 6px 20px;")
+        self.btn_cancel = QPushButton("Отмена")
+        self.btn_cancel.setStyleSheet("padding: 6px 20px;")
+
+        self.btn_save.clicked.connect(self.accept)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_save)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+
+        # === ЗАГРУЗКА ДАННЫХ ===
+        if platform_data:
+            self.le_name.setText(platform_data.get("name", ""))
+            dim = platform_data.get("dim", [220.0, 220.0, 280.0])
+            self.le_x.setText(str(dim[0]))
+            self.le_y.setText(str(dim[1]))
+            self.le_z.setText(str(dim[2]))
+
+            self.chk_use_zones.setChecked(platform_data.get("use_zones", False))
+            self.zones_data = platform_data.get("zones", [])
+        else:
+            # Стартовые зоны для новой платформы
+            self.zones_data = [
+                {"name": "OL", "shape": 0, "x": -90.0, "y": 90.0, "r": 5.0, "zmin": 0.100, "zmax": 0.110,
+                 "full_h": False},
+                {"name": "OR", "shape": 0, "x": 90.0, "y": 90.0, "r": 5.0, "zmin": 0.100, "zmax": 0.110,
+                 "full_h": False},
+                {"name": "UL", "shape": 0, "x": -90.0, "y": -90.0, "r": 5.0, "zmin": 0.100, "zmax": 0.110,
+                 "full_h": False},
+                {"name": "UR", "shape": 0, "x": 90.0, "y": -90.0, "r": 5.0, "zmin": 0.100, "zmax": 0.110,
+                 "full_h": False}
+            ]
+
+        self.refresh_zones_list()
+
+    def init_general_tab(self):
+        layout = QVBoxLayout(self.tab_general)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        layout.addWidget(QLabel("Название машины/платформы:"))
+        self.le_name = QLineEdit("Новая машина")
+        layout.addWidget(self.le_name)
+
+        grp_dim = QGroupBox("Габариты рабочей камеры (мм)")
+        grp_dim.setStyleSheet(
+            "QGroupBox { border: 1px solid #555; margin-top: 10px; color: #ccc; font-weight: bold; } QGroupBox::title { top: -8px; left: 10px; }")
+        grid_dim = QGridLayout(grp_dim)
+
+        grid_dim.addWidget(QLabel("Ось X:"), 0, 0)
+        self.le_x = QLineEdit("220")
+        grid_dim.addWidget(self.le_x, 0, 1)
+
+        grid_dim.addWidget(QLabel("Ось Y:"), 1, 0)
+        self.le_y = QLineEdit("220")
+        grid_dim.addWidget(self.le_y, 1, 1)
+
+        grid_dim.addWidget(QLabel("Ось Z (Высота):"), 2, 0)
+        self.le_z = QLineEdit("280")
+        grid_dim.addWidget(self.le_z, 2, 1)
+
+        layout.addWidget(grp_dim)
+
+        layout.addWidget(QLabel("Пользовательская плита построения (Опционально):"))
+        h_stl = QHBoxLayout()
+        self.le_stl_path = QLineEdit()
+        self.le_stl_path.setPlaceholderText("Файл не выбран...")
+        self.le_stl_path.setReadOnly(True)
+        self.btn_browse_stl = QPushButton("Обзор...")
+        h_stl.addWidget(self.le_stl_path)
+        h_stl.addWidget(self.btn_browse_stl)
+        layout.addLayout(h_stl)
+        layout.addStretch()
+
+    def init_zones_tab(self):
+        layout = QVBoxLayout(self.tab_zones)
+        layout.setContentsMargins(15, 15, 15, 15)
+
+        self.chk_use_zones = QCheckBox("Активировать Запретные зоны")
+        layout.addWidget(self.chk_use_zones)
+        layout.addSpacing(10)
+
+        h_main = QHBoxLayout()
+
+        # === ЛЕВАЯ ПАНЕЛЬ: СПИСОК ЗОН ===
+        left_layout = QVBoxLayout()
+        self.table_zones = QTableWidget(0, 1)
+        self.table_zones.horizontalHeader().setVisible(False)
+        self.table_zones.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table_zones.verticalHeader().setVisible(False)
+        self.table_zones.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table_zones.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table_zones.itemSelectionChanged.connect(self.on_zone_select)
+        left_layout.addWidget(self.table_zones)
+
+        btn_z_layout = QHBoxLayout()
+        self.btn_z_add = QPushButton("➕ Добавить")
+        self.btn_z_del = QPushButton("❌ Удалить")
+        self.btn_z_add.clicked.connect(self.add_zone)
+        self.btn_z_del.clicked.connect(self.del_zone)
+        btn_z_layout.addWidget(self.btn_z_add)
+        btn_z_layout.addWidget(self.btn_z_del)
+        left_layout.addLayout(btn_z_layout)
+        h_main.addLayout(left_layout, stretch=1)
+
+        # === ПРАВАЯ ПАНЕЛЬ: ПАРАМЕТРЫ ===
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(20, 0, 0, 0)
+
+        grid = QGridLayout()
+        grid.setSpacing(10)
+
+        grid.addWidget(QLabel("Форма"), 0, 0)
+        self.cb_shape = QComboBox()
+        self.cb_shape.addItems(["Цилиндрические", "Прямоугольные"])
+        grid.addWidget(self.cb_shape, 0, 1, 1, 3)
+
+        grid.addWidget(QLabel("Центр"), 1, 0)
+        grid.addWidget(QLabel("X"), 1, 1, Qt.AlignRight)
+        self.le_zx = QLineEdit("0.000")
+        grid.addWidget(self.le_zx, 1, 2)
+        grid.addWidget(QLabel("мм"), 1, 3)
+
+        grid.addWidget(QLabel("Y"), 2, 1, Qt.AlignRight)
+        self.le_zy = QLineEdit("0.000")
+        grid.addWidget(self.le_zy, 2, 2)
+        grid.addWidget(QLabel("мм"), 2, 3)
+
+        grid.addWidget(QLabel("Радиус"), 3, 0)
+        grid.addWidget(QLabel("R"), 3, 1, Qt.AlignRight)
+        self.le_zr = QLineEdit("5.000")
+        grid.addWidget(self.le_zr, 3, 2)
+        grid.addWidget(QLabel("мм"), 3, 3)
+
+        grid.addWidget(QLabel("Высота"), 4, 0)
+        grid.addWidget(QLabel("Z Мин."), 4, 1, Qt.AlignRight)
+        self.le_zmin = QLineEdit("0.000")
+        grid.addWidget(self.le_zmin, 4, 2)
+        grid.addWidget(QLabel("мм"), 4, 3)
+
+        grid.addWidget(QLabel("Z Макс."), 5, 1, Qt.AlignRight)
+        self.le_zmax = QLineEdit("0.000")
+        grid.addWidget(self.le_zmax, 5, 2)
+        grid.addWidget(QLabel("мм"), 5, 3)
+
+        right_layout.addLayout(grid)
+
+        h_chk = QHBoxLayout()
+        h_chk.addSpacing(60)
+        self.chk_full_h = QCheckBox("Высота всей платформы")
+        h_chk.addWidget(self.chk_full_h)
+        right_layout.addLayout(h_chk)
+        right_layout.addStretch()
+        h_main.addLayout(right_layout, stretch=2)
+        layout.addLayout(h_main)
+
+        # ПРИВЯЗЫВАЕМ СОХРАНЕНИЕ НА ЛЕТУ
+        self.cb_shape.currentIndexChanged.connect(self.save_current_zone)
+        self.chk_full_h.toggled.connect(self.save_current_zone)
+        for le in (self.le_zx, self.le_zy, self.le_zr, self.le_zmin, self.le_zmax):
+            le.textEdited.connect(self.save_current_zone)
+
+    def refresh_zones_list(self):
+        """Перерисовывает таблицу зон слева"""
+        self.table_zones.blockSignals(True)
+        self.table_zones.setRowCount(0)
+        for zone in self.zones_data:
+            row = self.table_zones.rowCount()
+            self.table_zones.insertRow(row)
+            self.table_zones.setItem(row, 0, QTableWidgetItem(zone["name"]))
+        self.table_zones.blockSignals(False)
+
+        if self.zones_data:
+            self.table_zones.selectRow(0)
+
+    def on_zone_select(self):
+        """Заполняет поля справа при клике на зону в списке"""
+        selected = self.table_zones.selectedItems()
+        if not selected: return
+
+        self.current_zone_idx = selected[0].row()
+        zone = self.zones_data[self.current_zone_idx]
+
+        # Блокируем, чтобы не сработало случайное сохранение при автозаполнении
+        self._block_zone_signals(True)
+        self.cb_shape.setCurrentIndex(zone.get("shape", 0))
+        self.le_zx.setText(str(zone.get("x", 0.0)))
+        self.le_zy.setText(str(zone.get("y", 0.0)))
+        self.le_zr.setText(str(zone.get("r", 5.0)))
+        self.le_zmin.setText(str(zone.get("zmin", 0.0)))
+        self.le_zmax.setText(str(zone.get("zmax", 0.0)))
+        self.chk_full_h.setChecked(zone.get("full_h", False))
+        self._block_zone_signals(False)
+
+    def save_current_zone(self, *args):
+        """Считывает поля справа и сохраняет в память при любом изменении"""
+        if self.current_zone_idx < 0 or self.current_zone_idx >= len(self.zones_data):
+            return
+
+        zone = self.zones_data[self.current_zone_idx]
+        zone["shape"] = self.cb_shape.currentIndex()
+        zone["full_h"] = self.chk_full_h.isChecked()
+
+        try:
+            zone["x"] = float(self.le_zx.text().replace(',', '.'))
+            zone["y"] = float(self.le_zy.text().replace(',', '.'))
+            zone["r"] = float(self.le_zr.text().replace(',', '.'))
+            zone["zmin"] = float(self.le_zmin.text().replace(',', '.'))
+            zone["zmax"] = float(self.le_zmax.text().replace(',', '.'))
+        except ValueError:
+            pass  # Игнорируем, если в поле вбили минус или оставили пустым при вводе
+
+    def add_zone(self):
+        """Создает новую зону по умолчанию"""
+        new_zone = {
+            "name": f"Зона {len(self.zones_data) + 1}",
+            "shape": 0, "x": 0.0, "y": 0.0, "r": 5.0, "zmin": 0.0, "zmax": 0.0, "full_h": False
+        }
+        self.zones_data.append(new_zone)
+        self.refresh_zones_list()
+        self.table_zones.selectRow(len(self.zones_data) - 1)
+
+    def del_zone(self):
+        """Удаляет выбранную зону"""
+        selected = self.table_zones.selectedItems()
+        if not selected: return
+        idx = selected[0].row()
+        self.zones_data.pop(idx)
+        self.current_zone_idx = -1
+        self.refresh_zones_list()
+
+    def _block_zone_signals(self, block):
+        self.cb_shape.blockSignals(block)
+        self.le_zx.blockSignals(block)
+        self.le_zy.blockSignals(block)
+        self.le_zr.blockSignals(block)
+        self.le_zmin.blockSignals(block)
+        self.le_zmax.blockSignals(block)
+        self.chk_full_h.blockSignals(block)
+
+    def get_data(self):
+        """Собирает введенные данные в словарь для передачи в Менеджер"""
+        name = self.le_name.text().strip() or "Без названия"
+        try:
+            x = float(self.le_x.text().replace(',', '.'))
+            y = float(self.le_y.text().replace(',', '.'))
+            z = float(self.le_z.text().replace(',', '.'))
+        except ValueError:
+            x, y, z = 220.0, 220.0, 280.0
+
+        return {
+            "name": name,
+            "dim": [x, y, z],
+            "use_zones": self.chk_use_zones.isChecked(),
+            "zones": self.zones_data
+        }
 class DialogDonate(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1370,7 +1803,7 @@ class DialogDonate(QDialog):
         # Делаем окно более компактным и вертикальным
         self.setFixedSize(350, 480)
 
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         logo_path = os.path.join(base_path, "assets", "logo.png")
         self.setWindowIcon(QIcon(logo_path))
 

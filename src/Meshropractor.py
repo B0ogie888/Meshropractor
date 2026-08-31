@@ -20,8 +20,9 @@ from Workers_Meshropractor import AlignmentThread, CompensationThread, HAS_O3D
 if HAS_O3D:
     import open3d as o3d
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Это путь до папки src
+PROJECT_ROOT = os.path.dirname(BASE_DIR)              # Поднимаемся на уровень выше в корень
+ASSETS_DIR = os.path.join(PROJECT_ROOT, "assets")     # Теперь ищем assets в корне
 
 
 class MainWindow(QMainWindow):
@@ -43,6 +44,26 @@ class MainWindow(QMainWindow):
 
         # --- Переменные Слайсера ---
         self.slicer_parts = []  # Список для хранения всех загруженных деталей
+
+        # --- Память платформ ---
+        self.plat_actors = []  # Список актеров 3D-платформы
+        plat_str = self.settings.value("platforms_json", None)
+        if plat_str:
+            self.platforms = json.loads(plat_str)
+        else:
+            # Стартовый набор по умолчанию, если программа запущена впервые
+            self.platforms = [
+                {"name": "Concept Laser M2", "dim": [220, 220, 280], "is_default": True},
+                {"name": "Concept Laser Mlab", "dim": [90, 90, 80], "is_default": False}
+            ]
+
+        # Подключаем сигналы переключения сцен
+        self.ui.stack.currentChanged.connect(lambda idx: self.refresh_scene_visibility() if self.ui.stack.widget(idx) is self.ui.page_slicer else None)
+        self.ui.scene_tabs.currentChanged.connect(self.on_scene_tab_changed)
+        self.ui.cb_plat.currentIndexChanged.connect(self.on_cb_plat_changed)
+
+        # Обновляем текст вкладки снизу при старте
+        self.update_platform_ui(draw=False)
 
         self.actors = {"CAD": None, "Scan": None, "Result": None, "Heatmap": None}
         self.pick_mode = None
@@ -85,6 +106,10 @@ class MainWindow(QMainWindow):
         # Кнопки-пустышки, чтобы не было крашей, если на них нажмут
         self.ui.ribbon_btns["Сохранить выбранные детали как"].clicked.connect(self.save_selected_slicer_parts)
         self.ui.ribbon_btns["Сохранить все в папку"].clicked.connect(lambda: self.log("Функция в разработке"))
+
+        # --- Кнопка вызова Менеджера платформ ---
+        if "Управление платформами" in self.ui.ribbon_btns:
+            self.ui.ribbon_btns["Управление платформами"].clicked.connect(self.open_platform_manager)
 
         # --- Сигналы вкладки "Информация о детали" ---
         self.ui.cb_info_name.currentIndexChanged.connect(self.update_part_info_tab)
@@ -343,13 +368,23 @@ class MainWindow(QMainWindow):
                         self.ui.slicer_plotter.reset_camera()
                     self.ui.slicer_plotter.render()
 
+                # Узнаем, на какой вкладке мы сейчас находимся
+                current_tab_idx = self.ui.scene_tabs.currentIndex()
+                active_platforms = [p for p in self.platforms if p["is_default"]]
+
+                assigned_plat = None
+                # Если мы НЕ на модельной сцене, привязываем деталь к текущей машине
+                if current_tab_idx > 0 and len(active_platforms) >= current_tab_idx:
+                    assigned_plat = active_platforms[current_tab_idx - 1]["name"]
+
                 # Сохраняем в список
                 self.slicer_parts.append({
                     "mesh": mesh,
-                    "mesh_pv": pv_mesh,  # pyvista-версия меша - нужна, например, для рамки-bbox в меню "Затенение"
+                    "mesh_pv": pv_mesh,
                     "filename": filename,
                     "actor_name": actor_name,
-                    "last_visible_mode": "shaded_wire",  # соответствует show_edges=True в add_mesh выше
+                    "last_visible_mode": "shaded_wire",
+                    "platform": assigned_plat  # <--- НОВЫЙ ПАРАМЕТР ПРИВЯЗКИ
                 })
 
                 # --- ДОБАВЛЯЕМ ДЕТАЛЬ В ТАБЛИЦУ ---
@@ -414,6 +449,8 @@ class MainWindow(QMainWindow):
                 self.ui.lbl_part_count.setText(f"Кол-во деталей: {self.ui.tbl_parts.rowCount()}")
                 self.log("✅ Деталь успешно импортирована в сцену слайсера.")
                 self.update_info_combobox()
+                self.refresh_scene_visibility()  # <--- ВМЕСТО render()
+                self.update_parts_table_filter(current_tab_idx)
             except Exception as e:
                 self.log(f"[!] Ошибка при импорте детали: {str(e)}")
 
@@ -466,18 +503,23 @@ class MainWindow(QMainWindow):
                 self.log(f"[!] Ошибка при сохранении: {str(e)}")
 
     def _on_vis_checkbox_changed(self, row, is_visible):
-        """Реагирует на переключение виджета галочки 'Видимые'."""
-        if row >= len(self.slicer_parts):
-            return
+        if row >= len(self.slicer_parts): return
 
-        # is_visible теперь — это строгий True или False
-        if is_visible:
-            # Если галочка стоит, возвращаем деталь в последнем выбранном режиме отображения
-            last_mode = self.slicer_parts[row].get("last_visible_mode", "shaded_wire")
-            self._apply_part_display_mode(row, last_mode, sync_visible_checkbox=False)
-        else:
-            # Если снята, полностью прячем со сцены
-            self._apply_part_display_mode(row, "hide", sync_visible_checkbox=False)
+        # ВОССТАНАВЛИВАЕМ ЛОГИКУ ТЕКСТА ПРИ ОТКЛЮЧЕНИИ ГАЛОЧКИ
+        cell = self.ui.tbl_parts.item(row, self.COL_SHADING)
+        if cell:
+            if not is_visible:
+                cell.setText("Скрыто")
+            else:
+                last_mode = self.slicer_parts[row].get("last_visible_mode", "shaded_wire")
+                mode_labels = {
+                    "hide": "Скрыто", "shaded": "Затенение", "triangles": "Треугольники",
+                    "shaded_wire": "Зат.+каркас", "wireframe": "Каркас",
+                    "bbox": "Огр. паралл.", "transparent": "Прозрачность", "flat": "Без затенения"
+                }
+                cell.setText(mode_labels.get(last_mode, "Зат.+каркас"))
+
+        self.refresh_scene_visibility()
 
     # Добавляем row и column в аргументы
     def on_slicer_part_selection_changed(self, row, column):
@@ -1184,14 +1226,47 @@ class MainWindow(QMainWindow):
                 if self.result_mesh: zf.writestr('meshes/result.stl', self.result_mesh.export(file_type='stl'))
 
                 meta = {
-                    "version": "1.2",
+                    "version": "1.4",
                     "cad_pts": [list(p) for p in self.cad_pts],
-                    "scan_pts": [list(p) for p in self.scan_pts]
+                    "scan_pts": [list(p) for p in self.scan_pts],
+                    "slicer_parts_info": [],  # Здесь будем хранить полные данные деталей
+                    "platforms": getattr(self, 'platforms', [])  # СОХРАНЯЕМ ПЛАТФОРМЫ И ЗОНЫ
                 }
 
-                # Сохраняем ВСЕ детали слайсера и их оригинальные имена
+                # Сохраняем ВСЕ детали слайсера и их метаданные
                 for i, part_data in enumerate(self.slicer_parts):
                     zf.writestr(f'meshes/slicer_part_{i}.stl', part_data['mesh'].export(file_type='stl'))
+
+                    # Читаем состояния чекбоксов
+                    sel_chk = False
+                    vis_chk = False
+                    if self.ui.tbl_parts.cellWidget(i, 1):
+                        sel_chk = self.ui.tbl_parts.cellWidget(i, 1).findChild(QCheckBox).isChecked()
+                    if self.ui.tbl_parts.cellWidget(i, 2):
+                        vis_chk = self.ui.tbl_parts.cellWidget(i, 2).findChild(QCheckBox).isChecked()
+
+                    # Читаем прозрачность
+                    trans_val = "0%"
+                    if self.ui.tbl_parts.item(i, 4): trans_val = self.ui.tbl_parts.item(i, 4).text()
+
+                    # Читаем цвет из 3D-сцены
+                    color_hex = "#d3d3d3"
+                    if self.ui.slicer_plotter and part_data["actor_name"] in self.ui.slicer_plotter.actors:
+                        rgb = self.ui.slicer_plotter.actors[part_data["actor_name"]].GetProperty().GetColor()
+                        color_hex = QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)).name()
+
+                    part_info = {
+                        "filename": part_data["filename"],
+                        "platform": part_data.get("platform"),  # Запоминаем машину
+                        "last_visible_mode": part_data.get("last_visible_mode", "shaded_wire"),
+                        "is_selected": sel_chk,
+                        "is_visible": vis_chk,
+                        "transparency": trans_val,
+                        "color": color_hex
+                    }
+                    meta["slicer_parts_info"].append(part_info)
+
+                    # Для обратной совместимости со старыми сохранениями
                     meta[f"slicer_name_{i}"] = part_data['filename']
 
                 zf.writestr('project.json', json.dumps(meta, indent=4))
@@ -1222,6 +1297,15 @@ class MainWindow(QMainWindow):
                 meta = json.loads(zf.read('project.json').decode('utf-8')) if 'project.json' in file_list else {}
                 has_predef = False
 
+                # --- ВОССТАНАВЛИВАЕМ ПЛАТФОРМЫ И ЗОНЫ ИЗ ПРОЕКТА ---
+                if "platforms" in meta:
+                    self.platforms = meta["platforms"]
+                    # Сохраняем их в глобальные настройки на будущее
+                    self.settings.setValue("platforms_json", json.dumps(self.platforms))
+                    # Перестраиваем интерфейс (без 3D отрисовки, она будет позже)
+                    self.update_platform_ui(draw=False)
+                    # ---------------------------------------------------
+
                 if 'meshes/cad.stl' in file_list:
                     self.cad_mesh = trimesh.load(io.BytesIO(zf.read('meshes/cad.stl')), file_type='stl')
                     self.show_mesh("CAD", self.cad_mesh)
@@ -1250,8 +1334,9 @@ class MainWindow(QMainWindow):
                 slicer_files = [f for f in file_list if f.startswith('meshes/slicer_part_')]
                 if slicer_files:
                     self.ui._ensure_slicer_plotter()
-                    # Блокируем сигналы таблицы, чтобы галочки не вызывали ошибки при загрузке
                     self.ui.tbl_parts.blockSignals(True)
+
+                    slicer_parts_info = meta.get("slicer_parts_info", [])
 
                     for i, s_file in enumerate(slicer_files):
                         mesh = trimesh.load(io.BytesIO(zf.read(s_file)), file_type='stl')
@@ -1260,17 +1345,27 @@ class MainWindow(QMainWindow):
                         part_id = len(self.slicer_parts)
                         actor_name = f"slicer_part_{part_id}"
 
-                        if self.ui.slicer_plotter:
-                            self.ui.slicer_plotter.add_mesh(pv_mesh, color="#d3d3d3", show_edges=True, name=actor_name)
+                        # Берем инфу из нового сохранения или генерируем базовую, если проект старый
+                        if i < len(slicer_parts_info):
+                            p_info = slicer_parts_info[i]
+                        else:
+                            p_info = {
+                                "filename": meta.get(f"slicer_name_{i}", f"Project_Part_{part_id + 1}.stl"),
+                                "platform": None, "last_visible_mode": "shaded_wire",
+                                "is_selected": True, "is_visible": True, "transparency": "0%", "color": "#d3d3d3"
+                            }
 
-                        original_name = meta.get(f"slicer_name_{i}", f"Project_Part_{part_id + 1}.stl")
+                        if self.ui.slicer_plotter:
+                            actor = self.ui.slicer_plotter.add_mesh(pv_mesh, color=p_info["color"], show_edges=(
+                                        p_info["last_visible_mode"] == "shaded_wire"), name=actor_name)
+                            if p_info["transparency"].endswith('%'):
+                                actor.GetProperty().SetOpacity(1.0 - (int(p_info["transparency"][:-1]) / 100.0))
 
                         self.slicer_parts.append({
-                            "mesh": mesh,
-                            "mesh_pv": pv_mesh,
-                            "filename": original_name,
-                            "actor_name": actor_name,
-                            "last_visible_mode": "shaded_wire",
+                            "mesh": mesh, "mesh_pv": pv_mesh,
+                            "filename": p_info["filename"], "actor_name": actor_name,
+                            "last_visible_mode": p_info["last_visible_mode"],
+                            "platform": p_info["platform"]
                         })
 
                         row = self.ui.tbl_parts.rowCount()
@@ -1278,32 +1373,72 @@ class MainWindow(QMainWindow):
 
                         item_id = QTableWidgetItem(str(row + 1))
                         item_id.setTextAlignment(Qt.AlignCenter)
+                        item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
                         self.ui.tbl_parts.setItem(row, 0, item_id)
 
-                        item_sel = QTableWidgetItem()
-                        item_sel.setTextAlignment(Qt.AlignCenter)
-                        item_sel.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                        item_sel.setCheckState(Qt.Checked)
-                        self.ui.tbl_parts.setItem(row, 1, item_sel)
+                        # --- Выбранные ---
+                        sel_container = QWidget()
+                        sel_layout = QHBoxLayout(sel_container)
+                        sel_layout.setContentsMargins(0, 0, 0, 0)
+                        sel_layout.setAlignment(Qt.AlignCenter)
+                        chk_sel = QCheckBox()
+                        chk_sel.setFixedSize(20, 20)
+                        chk_sel.setChecked(p_info["is_selected"])
+                        chk_sel.setCursor(Qt.PointingHandCursor)
+                        sel_layout.addWidget(chk_sel)
+                        self.ui.tbl_parts.setCellWidget(row, 1, sel_container)
 
-                        item_vis = QTableWidgetItem()
-                        item_vis.setTextAlignment(Qt.AlignCenter)
-                        item_vis.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-                        item_vis.setCheckState(Qt.Checked)
-                        self.ui.tbl_parts.setItem(row, 2, item_vis)
+                        # --- Видимые ---
+                        vis_container = QWidget()
+                        vis_layout = QHBoxLayout(vis_container)
+                        vis_layout.setContentsMargins(0, 0, 0, 0)
+                        vis_layout.setAlignment(Qt.AlignCenter)
+                        chk_vis = QCheckBox()
+                        chk_vis.setFixedSize(20, 20)
+                        chk_vis.setChecked(p_info["is_visible"])
+                        chk_vis.setCursor(Qt.PointingHandCursor)
+                        chk_vis.toggled.connect(lambda checked, r=row: self._on_vis_checkbox_changed(r, checked))
+                        vis_layout.addWidget(chk_vis)
+                        self.ui.tbl_parts.setCellWidget(row, 2, vis_container)
 
-                        self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Зат.+каркас"))  # соответствует show_edges=True при add_mesh выше
-                        self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem("0%"))
-                        self.ui.tbl_parts.setItem(row, 5, QTableWidgetItem("Серый"))
-                        self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem("STL"))
-                        self.ui.tbl_parts.setItem(row, 7, QTableWidgetItem(original_name))
+                        # --- Затенение и Прозрачность ---
+                        mode_labels = {
+                            "hide": "Скрыто", "shaded": "Затенение", "triangles": "Треугольники",
+                            "shaded_wire": "Зат.+каркас", "wireframe": "Каркас",
+                            "bbox": "Огр. паралл.", "transparent": "Прозрачность", "flat": "Без затенения"
+                        }
+                        mode_str = mode_labels.get(p_info["last_visible_mode"], "Зат.+каркас") if p_info[
+                            "is_visible"] else "Скрыто"
+                        self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem(mode_str))
+                        self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem(p_info["transparency"]))
 
-                    self.ui.lbl_part_count.setText(f"Кол-во деталей: {self.ui.tbl_parts.rowCount()}")
+                        # --- Цвет ---
+                        color_container = QWidget()
+                        color_layout = QHBoxLayout(color_container)
+                        color_layout.setContentsMargins(0, 0, 0, 0)
+                        color_layout.setAlignment(Qt.AlignCenter)
+                        btn_color = QPushButton()
+                        btn_color.setFixedSize(24, 24)
+                        btn_color.setCursor(Qt.PointingHandCursor)
+                        btn_color.setStyleSheet(
+                            f"background-color: {p_info['color']}; border: 1px solid #555; border-radius: 3px;")
+                        btn_color.clicked.connect(
+                            lambda checked=False, r=row, b=btn_color: self.pick_slicer_part_color(r, b))
+                        color_layout.addWidget(btn_color)
+                        self.ui.tbl_parts.setCellWidget(row, 5, color_container)
+
+                        # --- Название ---
+                        self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem(p_info["filename"]))
+
                     if self.ui.slicer_plotter:
                         self.ui.slicer_plotter.reset_camera()
                         self.ui.slicer_plotter.render()
 
-                    self.ui.tbl_parts.blockSignals(False)  # Включаем сигналы обратно
+                    self.ui.tbl_parts.blockSignals(False)
+
+                    # ПРИМЕНЯЕМ ФИЛЬТРАЦИЮ ПЛАТФОРМ И ВИДИМОСТИ СРАЗУ ПОСЛЕ ЗАГРУЗКИ
+                    self.refresh_scene_visibility()
+                    self.update_parts_table_filter(self.ui.scene_tabs.currentIndex())
 
             self.add_to_recent(path)
             self.update_title(os.path.basename(path))
@@ -1329,6 +1464,223 @@ class MainWindow(QMainWindow):
         from UI_Meshropractor import DialogDonate
         dialog = DialogDonate(self)
         dialog.exec()
+
+    def open_platform_manager(self):
+        """Открывает окно управления 3D-принтерами/платформами"""
+        from UI_Meshropractor import DialogPlatformManager
+
+        # Передаем текущие платформы в окно при открытии
+        dialog = DialogPlatformManager(self, self.platforms)
+
+        # Привязываем кнопку "Применить"
+        dialog.btn_apply.clicked.connect(lambda: self.apply_platform_settings(dialog))
+
+        dialog.exec()
+
+    def apply_platform_settings(self, dialog):
+        """Срабатывает при нажатии 'Применить' в менеджере"""
+        new_platforms = dialog.get_data()
+
+        # УМНОЕ ОБНОВЛЕНИЕ ИМЕН: Если мы переименовали платформу,
+        # нужно обновить её имя и во всех деталях, чтобы они не исчезли!
+        if hasattr(self, 'platforms'):
+            for old_p, new_p in zip(self.platforms, new_platforms):
+                if old_p["name"] != new_p["name"]:
+                    for part in self.slicer_parts:
+                        if part.get("platform") == old_p["name"]:
+                            part["platform"] = new_p["name"]
+
+        self.platforms = new_platforms
+        self.settings.setValue("platforms_json", json.dumps(self.platforms))
+
+        self.update_platform_ui(draw=True)
+        self.log("[i] Настройки платформ успешно сохранены.")
+
+    def update_platform_ui(self, draw=True):
+        """Перестраивает вкладки сцен и выпадающий список на основе платформ"""
+
+        # 1. ЗАПОМИНАЕМ ИНДЕКС ТЕКУЩЕЙ ВКЛАДКИ (а не её имя)
+        current_tab_idx = 0
+        if getattr(self.ui, 'scene_tabs', None):
+            current_tab_idx = self.ui.scene_tabs.currentIndex()
+
+        # Блокируем сигналы, чтобы 3D-сцена и таблица не "моргали" при удалении вкладок
+        self.ui.scene_tabs.blockSignals(True)
+        self.ui.cb_plat.blockSignals(True)
+
+        # Удаляем старые вкладки
+        while self.ui.scene_tabs.count() > 1:
+            self.ui.scene_tabs.removeTab(1)
+
+        active_platforms = [p for p in self.platforms if p["is_default"]]
+
+        self.ui.cb_plat.clear()
+        self.ui.cb_plat.addItem("🖥 Модельная сцена")
+
+        # Добавляем новые вкладки
+        for p in active_platforms:
+            name = f"📦 {p['name']}"
+            self.ui.scene_tabs.addTab(QWidget(), name)
+            self.ui.cb_plat.addItem(name)
+
+        # 2. ВОЗВРАЩАЕМ ФОКУС ПО ИНДЕКСУ (с защитой от ошибок, если платформу удалили)
+        if current_tab_idx >= self.ui.scene_tabs.count():
+            current_tab_idx = max(0, self.ui.scene_tabs.count() - 1)
+
+        self.ui.scene_tabs.setCurrentIndex(current_tab_idx)
+        self.ui.cb_plat.setCurrentIndex(current_tab_idx)
+
+        # Снимаем блокировку сигналов
+        self.ui.cb_plat.blockSignals(False)
+        self.ui.scene_tabs.blockSignals(False)
+
+        # Принудительно отрисовываем обновленную платформу
+        if draw:
+            self.refresh_scene_visibility()
+            self.update_parts_table_filter(self.ui.scene_tabs.currentIndex())
+
+    def on_scene_tab_changed(self, index):
+        """Срабатывает при клике на вкладки 'Модельная сцена' / 'Машина 1'"""
+        # Синхронизируем выпадающий список с вкладкой
+        if getattr(self.ui, 'cb_plat', None) and self.ui.cb_plat.currentIndex() != index:
+            self.ui.cb_plat.blockSignals(True)
+            self.ui.cb_plat.setCurrentIndex(index)
+            self.ui.cb_plat.blockSignals(False)
+
+        self.update_parts_table_filter(index)
+        self.refresh_scene_visibility()
+
+        if getattr(self.ui, 'slicer_plotter', None):
+            self.ui.slicer_plotter.reset_camera()
+
+    def on_cb_plat_changed(self, index):
+        """Срабатывает при выборе платформы в выпадающем списке над таблицей"""
+        if getattr(self.ui, 'scene_tabs', None):
+            self.ui.scene_tabs.setCurrentIndex(index)
+
+    def update_parts_table_filter(self, tab_idx):
+        """Прячет чужие детали в таблице и пересчитывает счетчик"""
+        active_platforms = [p for p in self.platforms if p["is_default"]]
+
+        target_platform = None
+        if tab_idx > 0 and len(active_platforms) >= tab_idx:
+            target_platform = active_platforms[tab_idx - 1]["name"]
+
+        visible_count = 0
+        for row, part in enumerate(self.slicer_parts):
+            if tab_idx == 0:
+                # На модельной сцене видим все детали
+                self.ui.tbl_parts.setRowHidden(row, False)
+                visible_count += 1
+            else:
+                # На вкладке машины скрываем чужие детали
+                if part.get("platform") == target_platform:
+                    self.ui.tbl_parts.setRowHidden(row, False)
+                    visible_count += 1
+                else:
+                    self.ui.tbl_parts.setRowHidden(row, True)
+
+        # Обновляем текст со счетчиком деталей на АКТИВНОЙ вкладке
+        self.ui.lbl_part_count.setText(f"Кол-во деталей: {visible_count}")
+
+    def refresh_scene_visibility(self):
+        """Магия фильтрации: показывает только нужные детали и нужную плиту"""
+        if not getattr(self.ui, 'slicer_plotter', None): return
+
+        current_tab_idx = self.ui.scene_tabs.currentIndex()
+        active_platforms = [p for p in self.platforms if p["is_default"]]
+
+        # 1. Отрисовка физической платформы
+        if current_tab_idx == 0:
+            # Мы на модельной сцене - прячем платформу и ограничивающий куб
+            for actor in self.plat_actors: actor.SetVisibility(False)
+        else:
+            # Мы на вкладке конкретной машины - рисуем её габариты
+            if len(active_platforms) >= current_tab_idx:
+                plat_data = active_platforms[current_tab_idx - 1]
+                self.draw_platform(plat_data)  # <--- Теперь передаем объект целиком
+
+        # 2. Фильтрация деталей
+        for row, part in enumerate(self.slicer_parts):
+            # Проверяем, стоит ли галочка "Видимые" в таблице слева
+            container = self.ui.tbl_parts.cellWidget(row, self.COL_VISIBLE)
+            is_checked = container.findChild(QCheckBox).isChecked() if container else False
+
+            should_show = False
+            if is_checked:
+                if current_tab_idx == 0:
+                    should_show = True  # На модельной сцене показываем ВСЕ включенные детали
+                else:
+                    # На вкладке принтера показываем только те детали, которые ему принадлежат
+                    active_plat_name = active_platforms[current_tab_idx - 1]["name"]
+                    if part.get("platform") == active_plat_name:
+                        should_show = True
+
+                        # Применяем видимость
+            if should_show:
+                last_mode = part.get("last_visible_mode", "shaded_wire")
+                self._apply_part_display_mode(row, last_mode, sync_visible_checkbox=False)
+            else:
+                actor = self.ui.slicer_plotter.actors.get(part["actor_name"])
+                if actor: actor.SetVisibility(False)
+
+        self.ui.slicer_plotter.render()
+
+    def draw_platform(self, plat_data):
+        """Рисует серую металлическую плиту, синий каркас камеры и запретные зоны"""
+        for actor in self.plat_actors:
+            self.ui.slicer_plotter.remove_actor(actor)
+        self.plat_actors.clear()
+
+        # Достаем габариты
+        dim = plat_data.get("dim", [220, 220, 280])
+        x_len, y_len, z_len = dim
+
+        # 1. Сплошная плита построения
+        plate_mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=x_len, j_size=y_len)
+        plate_actor = self.ui.slicer_plotter.add_mesh(plate_mesh, color="#3a3a3a", show_edges=True,
+                                                      edge_color="#111111", name="plat_base")
+        plate_actor.pickable = False
+
+        # 2. Каркас габаритов камеры
+        bounds_mesh = pv.Cube(center=(0, 0, z_len / 2.0), x_length=x_len, y_length=y_len, z_length=z_len)
+        bounds_actor = self.ui.slicer_plotter.add_mesh(bounds_mesh, style='wireframe', color="#5dade2", line_width=1,
+                                                       opacity=0.3, name="plat_bounds")
+        bounds_actor.pickable = False
+
+        self.plat_actors.extend([plate_actor, bounds_actor])
+
+        # 3. ОТРИСОВКА ЗАПРЕТНЫХ ЗОН
+        if plat_data.get("use_zones", False):
+            zones = plat_data.get("zones", [])
+            for i, zone in enumerate(zones):
+                zx = zone.get("x", 0.0)
+                zy = zone.get("y", 0.0)
+                zr = zone.get("r", 5.0)
+
+                # Считаем высоту зоны
+                if zone.get("full_h", False):
+                    z_height = z_len
+                    z_center = z_len / 2.0
+                else:
+                    zmin = zone.get("zmin", 0.0)
+                    zmax = zone.get("zmax", 0.0)
+                    z_height = abs(zmax - zmin)
+                    if z_height < 0.001: z_height = 0.001  # Защита от нулевой высоты (краша PyVista)
+                    z_center = (zmax + zmin) / 2.0
+
+                # Генерируем 3D-сетку (0 - Цилиндр, 1 - Прямоугольник)
+                if zone.get("shape", 0) == 0:
+                    z_mesh = pv.Cylinder(center=(zx, zy, z_center), direction=(0, 0, 1), radius=zr, height=z_height)
+                else:
+                    # Для квадрата задаем размер равный диаметру (2 радиуса)
+                    z_mesh = pv.Cube(center=(zx, zy, z_center), x_length=zr * 2, y_length=zr * 2, z_length=z_height)
+
+                # Добавляем на сцену полупрозрачный красный объект
+                z_actor = self.ui.slicer_plotter.add_mesh(z_mesh, color="red", opacity=0.35, show_edges=True,
+                                                          edge_color="darkred", name=f"plat_zone_{i}")
+                z_actor.pickable = False
+                self.plat_actors.append(z_actor)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
