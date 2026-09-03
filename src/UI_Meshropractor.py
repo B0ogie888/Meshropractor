@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QToolBar, QStyle, QMainWindow,
                                QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog,
                                QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox,
-                               QFrame, QAbstractItemView, QStyledItemDelegate, QButtonGroup)
+                               QFrame, QAbstractItemView, QStyledItemDelegate, QButtonGroup, QDoubleSpinBox)
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
@@ -122,36 +122,79 @@ class Ui_MainWindow(object):
         self.central_widget.setMouseTracking(True)
         self.central_widget.setObjectName("MainWidget")
 
-        # --- ГЛОБАЛЬНЫЙ СТИЛЬ: КРАСИМ ПОЛЗУНКИ И ЧЕКБОКСЫ ---
+        # --- ГЛОБАЛЬНЫЙ СТИЛЬ: КРАСИМ ВСЕ СИСТЕМНЫЕ МЕНЮ И ЭЛЕМЕНТЫ В ТЕМНЫЙ ---
         main_window.setStyleSheet("""
-                            #MainWidget { background-color: #2b2b2b; }
+                    #MainWidget { background-color: #2b2b2b; }
 
-                            /* Стиль ползунков (QSlider) - спокойный красный цвет */
-                            QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #333; border-radius: 3px; }
-                            QSlider::sub-page:horizontal { background: #c0392b; border-radius: 3px; }
-                            QSlider::handle:horizontal { background: #ffffff; border: 1px solid #777; width: 14px; margin: -4px 0; border-radius: 7px; }
-                            QSlider::handle:horizontal:hover { border: 1px solid #c0392b; background: #f0f0f0; }
+                    /* Системные всплывающие меню (QMenu) по всей программе */
+                    QMenu { 
+                        background-color: #2b2b2b; 
+                        color: #e0e0e0; 
+                        border: 1px solid #444444; 
+                        padding: 4px;
+                    }
+                    QMenu::item { 
+                        padding: 6px 24px 6px 14px; 
+                        border-radius: 2px;
+                    }
+                    QMenu::item:selected { 
+                        background-color: #b31b1b; 
+                        color: #ffffff; 
+                    }
+                    QMenu::separator { 
+                        height: 1px; 
+                        background: #444444; 
+                        margin: 4px 6px; 
+                    }
 
-                            /* Стиль галочек (QCheckBox) - темный квадрат с векторной галочкой */
-                            QCheckBox { color: #e0e0e0; font-weight: bold; spacing: 8px; }
-                            QCheckBox::indicator { 
-                                width: 16px; 
-                                height: 16px; 
-                                border: 2px solid #555; 
-                                border-radius: 4px; 
-                                background-color: #333; 
-                            }
-                            QCheckBox::indicator:hover { 
-                                border: 2px solid #c0392b; 
-                            }
-                            QCheckBox::indicator:checked { 
-                                background-color: #333; 
-                                border: 2px solid #c0392b; 
-                                border-radius: 4px;
-                                /* Используем встроенную системную галочку Qt */
-                                image: url(":/qt-project.org/styles/commonstyle/images/check-16.png");
-                            }
-                        """)
+                    /* Все выпадающие списки (QComboBox) и их раскрывающиеся окна */
+                    QComboBox { 
+                        background-color: #333333; 
+                        color: #ffffff; 
+                        border: 1px solid #555555; 
+                        padding: 4px; 
+                        border-radius: 3px; 
+                    }
+                    QComboBox QAbstractItemView { 
+                        background-color: #2b2b2b; 
+                        color: #ffffff; 
+                        selection-background-color: #b31b1b; 
+                        selection-color: #ffffff; 
+                        border: 1px solid #555555; 
+                        outline: none;
+                    }
+
+                    /* Скроллбары (убираем белые системные полосы прокрутки) */
+                    QScrollBar:vertical {
+                        border: none;
+                        background: #2b2b2b;
+                        width: 8px;
+                        margin: 0;
+                    }
+                    QScrollBar::handle:vertical {
+                        background: #444444;
+                        min-height: 20px;
+                        border-radius: 4px;
+                    }
+                    QScrollBar::handle:vertical:hover {
+                        background: #555555;
+                    }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                        height: 0px;
+                    }
+
+                    /* Ползунки (QSlider) */
+                    QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #333; border-radius: 3px; }
+                    QSlider::sub-page:horizontal { background: #c0392b; border-radius: 3px; }
+                    QSlider::handle:horizontal { background: #ffffff; border: 1px solid #777; width: 14px; margin: -4px 0; border-radius: 7px; }
+                    QSlider::handle:horizontal:hover { border: 1px solid #c0392b; background: #f0f0f0; }
+
+                    /* Галочки (QCheckBox) */
+                    QCheckBox { color: #e0e0e0; font-weight: bold; spacing: 8px; }
+                    QCheckBox::indicator { width: 16px; height: 16px; border: 2px solid #555; border-radius: 4px; background-color: #333; }
+                    QCheckBox::indicator:hover { border: 2px solid #c0392b; }
+                    QCheckBox::indicator:checked { background-color: #333; border: 2px solid #c0392b; border-radius: 4px; }
+                """)
         main_window.setCentralWidget(self.central_widget)
 
         self.base_layout = QVBoxLayout(self.central_widget)
@@ -282,6 +325,25 @@ class Ui_MainWindow(object):
         # Стартовая страница по умолчанию
         self.stack.setCurrentWidget(self.page_start)
         print("[DEBUG] setupUi ПОЛНОСТЬЮ завершен OK", flush=True)
+
+    def _build_standard_part_table(self):
+        """Вспомогательный метод для создания пустой таблицы в стиле Слайсера"""
+        tbl = QTableWidget(0, 7)
+        tbl.setHorizontalHeaderLabels(["#", "Выбранные ▾", "Видимые", "Затенение", "Прозр.", "Цвет", "Название"])
+        tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        tbl.horizontalHeader().setStretchLastSection(True)
+        tbl.horizontalHeader().resizeSection(0, 25)
+        tbl.horizontalHeader().resizeSection(1, 85)
+        tbl.horizontalHeader().resizeSection(2, 70)
+        tbl.horizontalHeader().resizeSection(3, 70)
+        tbl.horizontalHeader().resizeSection(4, 50)
+        tbl.horizontalHeader().resizeSection(5, 50)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setSelectionMode(QAbstractItemView.NoSelection)
+        tbl.setFocusPolicy(Qt.NoFocus)
+        tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tbl.setItemDelegate(NoFocusDelegate(tbl))
+        return tbl
 
     def _ensure_slicer_plotter(self):
         """Лениво создает VTK-сцену слайсера"""
@@ -873,31 +935,56 @@ class Ui_MainWindow(object):
         self.main_splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(self.main_splitter)
 
-        # --- Левая панель ---
+        # --- ЛЕВАЯ ПАНЕЛЬ (В стиле Слайсера) ---
         self.left_panel = QWidget()
         self.left_layout = QVBoxLayout(self.left_panel)
-        self.left_layout.setContentsMargins(5, 5, 5, 5)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout.setSpacing(0)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabel("Элементы проекта")
-        self.tree.setStyleSheet("""
-                    QTreeWidget { font-size: 13px; color: white; background-color: #333333; border: 1px solid #444; }
-                    QHeaderView::section { background-color: #444444; color: white; font-weight: bold; border: 1px solid #555; padding: 4px; }
-                """)
+        # Скролл-зона, как в Magics
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: #2b2b2b; }")
 
-        self.cat_cad = QTreeWidgetItem(self.tree, ["Номинальные элементы (CAD)"])
-        self.cat_scan = QTreeWidgetItem(self.tree, ["Фактические элементы (Скан)"])
-        self.cat_res = QTreeWidgetItem(self.tree, ["Результаты"])
-        self.tree.expandAll()
-        self.left_layout.addWidget(self.tree)
+        content = QWidget()
+        content.setStyleSheet("""
+            .QWidget { background-color: #2b2b2b; } 
+            QTableWidget { background-color: #2b2b2b; color: #e0e0e0; gridline-color: #444444; border: 1px solid #444444; } 
+            QHeaderView::section { background-color: #333; color: white; border: 1px solid #444; padding: 2px; font-size: 11px; }
+        """)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(5, 5, 5, 5)
+        content_layout.setSpacing(5)
 
-        # --- Средняя панель (БАЗА ДЛЯ ЛЕНИВОЙ ЗАГРУЗКИ) ---
+        # 1. Группа CAD
+        self.grp_cad = CollapsibleBox("▼ Номинальная модель (CAD)")
+        self.tbl_cad = self._build_standard_part_table()
+        self.grp_cad.content_layout.addWidget(self.tbl_cad)
+        content_layout.addWidget(self.grp_cad)
+
+        # 2. Группа Скан
+        self.grp_scan = CollapsibleBox("▼ Фактические модели (Скан)")
+        self.tbl_scan = self._build_standard_part_table()
+        self.grp_scan.content_layout.addWidget(self.tbl_scan)
+        content_layout.addWidget(self.grp_scan)
+
+        # 3. Группа Результаты
+        self.grp_res = CollapsibleBox("▼ Результаты (Компенсация)")
+        self.tbl_res = self._build_standard_part_table()
+        self.grp_res.content_layout.addWidget(self.tbl_res)
+        content_layout.addWidget(self.grp_res)
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        self.left_layout.addWidget(scroll)
+
+        # --- Средняя панель (Сцена) ---
         self.plotter = None
         self._def_center_container = QWidget()
         self._def_center_layout = QVBoxLayout(self._def_center_container)
         self._def_center_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Правая панель ---
+        # --- Правая панель (Настройки) ---
         self.right_panel = QWidget()
         self.right_layout = QVBoxLayout(self.right_panel)
         self.right_layout.setContentsMargins(5, 5, 5, 5)
@@ -905,95 +992,35 @@ class Ui_MainWindow(object):
         self.main_splitter.addWidget(self.left_panel)
         self.main_splitter.addWidget(self._def_center_container)
         self.main_splitter.addWidget(self.right_panel)
-        self.main_splitter.setSizes([250, 950, 400])
+        self.main_splitter.setSizes([450, 850, 300])  # Сделали левую панель пошире для таблиц
 
         # === ВКЛАДКИ НА ПРАВОЙ ПАНЕЛИ ===
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
-                    QTabWidget::pane { border: 1px solid #444444; background-color: #2b2b2b; }
-                    QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 8px 15px; border: 1px solid #444444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
-                    QTabBar::tab:selected { background-color: #2b2b2b; color: #ffffff; font-weight: bold; border-top: 2px solid #b31b1b; }
-                    QTabBar::tab:hover { background-color: #333333; color: #ffffff; }
-                """)
+            QTabWidget::pane { border: 1px solid #444444; background-color: #2b2b2b; }
+            QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 8px 10px; font-size: 11px; border: 1px solid #444444; border-bottom: none; border-top-left-radius: 3px; border-top-right-radius: 3px; }
+            QTabBar::tab:selected { background-color: #2b2b2b; color: #ffffff; font-weight: bold; border-top: 2px solid #b31b1b; }
+        """)
 
         self.tab_align = QWidget()
         self.initAlignTab()
-        self.tabs.addTab(self.tab_align, "Шаг 1: Совмещение (ICP)")
+        self.tabs.addTab(self.tab_align, "1: Совмещение")
+
+        self.tab_heatmap = QWidget()
+        self.initHeatmapTab()
+        self.tabs.addTab(self.tab_heatmap, "2: Карта отклонений")
+
+        self.tab_params = QWidget()
+        self.initParamsTab()
+        self.tabs.addTab(self.tab_params, "3: Деформация")
 
         self.tab_comp = QWidget()
         self.initCompTab()
-        self.tabs.addTab(self.tab_comp, "Шаг 2: Компенсация (RBF)")
+        self.tabs.addTab(self.tab_comp, "4: Компенсация")
 
         self.right_layout.addWidget(self.tabs, stretch=6)
 
-        # === ПАНЕЛЬ СЛОЕВ ===
-        self.view_group = QGroupBox("Слои (Видимость, Цвет, Прозрачность)")
-        self.view_group.setStyleSheet("color: white;")
-        self.view_layout = QGridLayout()
-
-        self.chk_view_cad = QCheckBox("CAD")
-        self.chk_view_cad.setChecked(True)
-        self.btn_col_cad = self.create_color_button("CAD")
-        self.sld_op_cad = QSlider(Qt.Horizontal)
-        self.sld_op_cad.setRange(0, 100)
-        self.sld_op_cad.setValue(80)
-        self.lbl_op_cad = QLabel("80%")
-
-        self.chk_view_scan = QCheckBox("Скан")
-        self.chk_view_scan.setChecked(True)
-        self.btn_col_scan = self.create_color_button("Scan")
-        self.sld_op_scan = QSlider(Qt.Horizontal)
-        self.sld_op_scan.setRange(0, 100)
-        self.sld_op_scan.setValue(80)
-        self.lbl_op_scan = QLabel("80%")
-
-        self.chk_view_res = QCheckBox("Результат")
-        self.chk_view_res.setChecked(True)
-        self.btn_col_res = self.create_color_button("Result")
-        self.sld_op_res = QSlider(Qt.Horizontal)
-        self.sld_op_res.setRange(0, 100)
-        self.sld_op_res.setValue(100)
-        self.lbl_op_res = QLabel("100%")
-
-        self.view_layout.addWidget(self.chk_view_cad, 0, 0);
-        self.view_layout.addWidget(self.btn_col_cad, 0, 1);
-        self.view_layout.addWidget(self.sld_op_cad, 0, 2);
-        self.view_layout.addWidget(self.lbl_op_cad, 0, 3)
-        self.view_layout.addWidget(self.chk_view_scan, 1, 0);
-        self.view_layout.addWidget(self.btn_col_scan, 1, 1);
-        self.view_layout.addWidget(self.sld_op_scan, 1, 2);
-        self.view_layout.addWidget(self.lbl_op_scan, 1, 3)
-        self.view_layout.addWidget(self.chk_view_res, 2, 0);
-        self.view_layout.addWidget(self.btn_col_res, 2, 1);
-        self.view_layout.addWidget(self.sld_op_res, 2, 2);
-        self.view_layout.addWidget(self.lbl_op_res, 2, 3)
-
-        self.sld_op_cad.valueChanged.connect(lambda v: self.lbl_op_cad.setText(f"{v}%"))
-        self.sld_op_scan.valueChanged.connect(lambda v: self.lbl_op_scan.setText(f"{v}%"))
-        self.sld_op_res.valueChanged.connect(lambda v: self.lbl_op_res.setText(f"{v}%"))
-
-        self.view_group.setLayout(self.view_layout)
-        self.right_layout.addWidget(self.view_group, stretch=0)
-
-        # === ПАНЕЛЬ АНАЛИЗА ===
-        self.heat_group = QGroupBox("Анализ (Цветовая карта отклонений)")
-        self.heat_group.setStyleSheet("color: white;")
-        self.heat_layout = QVBoxLayout()
-        self.row_heat = QHBoxLayout()
-
-        self.btn_heatmap = QPushButton("🔥 Построить Heatmap (Скан vs CAD)")
-        self.btn_heatmap.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold;")
-        self.row_heat.addWidget(self.btn_heatmap)
-
-        self.btn_clear_heat = QPushButton("Сбросить")
-        self.btn_clear_heat.setStyleSheet("color: black;")
-        self.row_heat.addWidget(self.btn_clear_heat)
-        self.heat_layout.addLayout(self.row_heat)
-
-        self.add_slider(self.heat_layout, "Предел градиента (± мм)", 1, 50, 10, 1, "heat_limit", divider=10.0)
-        self.heat_group.setLayout(self.heat_layout)
-        self.right_layout.addWidget(self.heat_group, stretch=0)
-
+        # ВНИМАНИЕ: Старая панель view_group (Слои) отсюда удалена!
         return page
 
     def create_color_button(self, key):
@@ -1019,134 +1046,407 @@ class Ui_MainWindow(object):
     def initAlignTab(self):
         l = QVBoxLayout(self.tab_align)
 
-        # === ПРИМЕНЯЕМ ТЕМНЫЙ СТИЛЬ К ШАГУ 1 ===
+        # === ПРИМЕНЯЕМ ТЕМНЫЙ СТИЛЬ ===
         self.tab_align.setStyleSheet("""
-            QGroupBox { font-weight: bold; color: #cccccc; border: 1px solid #555555; margin-top: 10px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
-            QPushButton { background-color: #444444; color: white; border: 1px solid #555555; padding: 8px; border-radius: 4px; font-weight: bold; }
+            QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #555555; margin-top: 15px; padding-top: 15px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+            QLabel { color: #e0e0e0; font-weight: normal; border: none; }
+            QPushButton { background-color: #444444; color: white; border: 1px solid #555555; padding: 6px; border-radius: 3px; font-weight: bold; }
             QPushButton:hover { background-color: #555555; border: 1px solid #777777; }
             QPushButton:pressed { background-color: #b31b1b; }
+            QComboBox { background-color: #333333; color: #ffffff; border: 1px solid #666666; padding: 4px; border-radius: 3px; }
+            QComboBox QAbstractItemView { background-color: #333333; color: #ffffff; selection-background-color: #b31b1b; }
+            QCheckBox { color: #e0e0e0; }
         """)
 
-        group_files = QGroupBox("1. Базовые данные")
-        fl = QVBoxLayout()
-        self.btn_load_cad = QPushButton("Загрузить Исходный CAD (.stl)")
-        self.btn_load_scan = QPushButton("Загрузить Скан (.stl)")
-        fl.addWidget(self.btn_load_cad)
-        fl.addWidget(self.btn_load_scan)
-        group_files.setLayout(fl)
+        # 1. Элементы (САПР и Скан)
+        group_files = QGroupBox("Элементы")
+        fl = QGridLayout(group_files)
+        fl.addWidget(QLabel("Номинальная модель (CAD):"), 0, 0)
+        self.btn_load_cad = QPushButton("📁 Загрузить CAD (.stl)")
+        fl.addWidget(self.btn_load_cad, 0, 1)
+
+        fl.addWidget(QLabel("Фактическая сетка (Скан):"), 1, 0)
+        self.btn_load_scan = QPushButton("📁 Загрузить Скан (.stl)")
+        fl.addWidget(self.btn_load_scan, 1, 1)
         l.addWidget(group_files)
 
-        group_pts = QGroupBox("2. Вспомогательные маркеры (От локальных минимумов)")
-        pt_layout = QVBoxLayout()
-        self.lbl_pts = QLabel("Точек на CAD: 0 | Точек на Скане: 0")
+        # 2. Параметры поиска
+        group_params = QGroupBox("Параметры предварительного выравнивания")
+        pl = QGridLayout(group_params)
 
-        # Изменили цвет на светло-синий для читаемости на темном фоне
-        self.lbl_pts.setStyleSheet("font-weight: bold; color: #5dade2;")
-        pt_layout.addWidget(self.lbl_pts)
+        pl.addWidget(QLabel("Время поиска:"), 0, 0)
+        self.cb_search_time = QComboBox()
+        self.cb_search_time.addItems(["Кратко", "Нормаль", "Длинно"])
+        self.cb_search_time.setCurrentIndex(1)
+        pl.addWidget(self.cb_search_time, 0, 1)
+
+        # 3. Маркеры
+        lbl_markers = QLabel("Вспомогательные маркеры (Override)")
+        lbl_markers.setStyleSheet("color: #5dade2; font-weight: bold; margin-top: 5px;")
+        pl.addWidget(lbl_markers, 1, 0, 1, 2)
+
+        self.lbl_pts = QLabel("Точек на CAD: 0 | Точек на Скане: 0")
+        pl.addWidget(self.lbl_pts, 2, 0, 1, 2)
 
         row_btns = QHBoxLayout()
-        self.btn_pick_cad = QPushButton("📍 Выбрать на CAD")
-        self.btn_pick_scan = QPushButton("📍 Выбрать на Скане")
+        self.btn_pick_cad = QPushButton("📍 Маркер на CAD")
+        self.btn_pick_scan = QPushButton("📍 Маркер на Скане")
+        self.btn_clear_pts = QPushButton("Сбросить")
         row_btns.addWidget(self.btn_pick_cad)
         row_btns.addWidget(self.btn_pick_scan)
-        pt_layout.addLayout(row_btns)
+        row_btns.addWidget(self.btn_clear_pts)
+        pl.addLayout(row_btns, 3, 0, 1, 2)
 
-        self.btn_clear_pts = QPushButton("Сбросить маркеры")
-        pt_layout.addWidget(self.btn_clear_pts)
-        group_pts.setLayout(pt_layout)
-        l.addWidget(group_pts)
+        # 4. Дополнительное наилучшее соответствие (ICP)
+        self.chk_icp = QCheckBox("Вычислить дополнительное наилучшее соответствие (ICP)")
+        self.chk_icp.setChecked(True)
+        self.chk_icp.setStyleSheet("margin-top: 10px; font-weight: bold;")
+        pl.addWidget(self.chk_icp, 4, 0, 1, 2)
 
-        self.btn_run_icp = QPushButton("▶ СОВМЕСТИТЬ МОДЕЛИ (ICP)")
+        l.addWidget(group_params)
+
+        # 5. Результат
+        group_res = QGroupBox("Результат")
+        rl = QHBoxLayout(group_res)
+        rl.addWidget(QLabel("Отклонение (RMSE):"))
+        rl.addStretch()
+        self.lbl_rmse = QLabel("--- mm")
+        self.lbl_rmse.setStyleSheet("font-weight: bold; color: #ffffff;")
+        rl.addWidget(self.lbl_rmse)
+        l.addWidget(group_res)
+
+        # Кнопка запуска
+        self.btn_run_icp = QPushButton("▶ ВЫПОЛНИТЬ ВЫРАВНИВАНИЕ")
+        self.btn_run_icp.setCursor(Qt.PointingHandCursor)
         self.btn_run_icp.setStyleSheet(
-            "height: 50px; background-color: #2c3e50; color: white; font-weight: bold; font-size: 14px; border-radius: 4px;")
+            "height: 50px; background-color: #2c3e50; color: white; font-weight: bold; font-size: 14px; border-radius: 4px; margin-top: 10px;")
         l.addWidget(self.btn_run_icp)
         l.addStretch()
 
-    def initCompTab(self):
-        l = QVBoxLayout(self.tab_comp)
+    def initHeatmapTab(self):
+        """Шаг 2: Карта отклонений"""
+        layout = QVBoxLayout(self.tab_heatmap)
+        self.heat_group = QGroupBox("Анализ (Цветовая карта отклонений)")
+        self.heat_group.setStyleSheet("color: white; font-weight: bold; border: 1px solid #555; margin-top: 10px;")
+        heat_layout = QVBoxLayout(self.heat_group)
 
-        # === ПРИМЕНЯЕМ ЖЕСТКИЙ ТЕМНЫЙ СТИЛЬ К ШАГУ 2 ===
-        self.tab_comp.setStyleSheet("""
-            QWidget { background-color: #2b2b2b; color: #e0e0e0; }
-            QScrollArea { border: none; background-color: #2b2b2b; }
-            QCheckBox { color: #e0e0e0; font-weight: bold; }
+        row_heat = QHBoxLayout()
+        self.btn_heatmap = QPushButton("🔥 Построить Heatmap")
+        self.btn_heatmap.setStyleSheet("background-color: #e67e22; color: white; padding: 10px;")
+        self.btn_clear_heat = QPushButton("Сбросить")
+
+        row_heat.addWidget(self.btn_heatmap)
+        row_heat.addWidget(self.btn_clear_heat)
+        heat_layout.addLayout(row_heat)
+
+        self.add_slider(heat_layout, "Предел градиента (± мм)", 1, 50, 10, 1, "heat_limit", divider=10.0)
+
+        # --- БЛОК ТОЧЕЧНОГО КОНТРОЛЯ (GOM CALLOUTS) ---
+        row_callouts = QHBoxLayout()
+        self.chk_callouts = QCheckBox("📍 Флажки отклонений (Клик)")
+        self.chk_callouts.setStyleSheet("color: #5dade2; font-weight: bold;")
+        self.chk_callouts.setCursor(Qt.PointingHandCursor)
+
+        self.btn_clear_callouts = QPushButton("Очистить флажки")
+        self.btn_clear_callouts.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_callouts.setStyleSheet(
+            "background-color: #444; color: white; padding: 4px 8px; border-radius: 3px;")
+
+        row_callouts.addWidget(self.chk_callouts)
+        row_callouts.addWidget(self.btn_clear_callouts)
+        heat_layout.addLayout(row_callouts)
+        # ----------------------------------------------
+
+        layout.addWidget(self.heat_group)
+        layout.addStretch()
+
+    def create_spinbox_wrapper(self, spinbox):
+        """Оборачивает QSpinBox в кастомный виджет с кнопками [-] и [+] по бокам"""
+        container = QWidget()
+        container.setObjectName("SpinWrapper")
+        container.setStyleSheet("""
+            QWidget#SpinWrapper {
+                background-color: #333333;
+                border: 1px solid #666666;
+                border-radius: 3px;
+            }
+            QWidget#SpinWrapper:disabled {
+                background-color: #222222;
+                border: 1px solid #444444;
+            }
+            QSpinBox, QDoubleSpinBox {
+                background-color: transparent;
+                border: none;
+                color: #ffffff;
+                font-weight: bold;
+            }
+            QSpinBox:disabled, QDoubleSpinBox:disabled {
+                color: #777777;
+            }
         """)
+
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(0)
+
+        btn_minus = QPushButton("—")
+        btn_plus = QPushButton("+")
+
+        btn_style = """
+            QPushButton { 
+                background: transparent; 
+                color: #aaaaaa; 
+                font-weight: bold; 
+                border: none; 
+                font-size: 14px;
+            }
+            QPushButton:hover { color: #ffffff; }
+            QPushButton:pressed { color: #b31b1b; }
+            QPushButton:disabled { color: #555555; }
+        """
+        btn_minus.setStyleSheet(btn_style)
+        btn_plus.setStyleSheet(btn_style)
+        btn_minus.setFixedSize(24, 24)
+        btn_plus.setFixedSize(24, 24)
+        btn_minus.setCursor(Qt.PointingHandCursor)
+        btn_plus.setCursor(Qt.PointingHandCursor)
+
+        # Отключаем системные стрелки и центрируем текст
+        spinbox.setButtonSymbols(QSpinBox.NoButtons)
+        spinbox.setAlignment(Qt.AlignCenter)
+
+        # Привязываем клики к системному шагу ползунка
+        btn_minus.clicked.connect(spinbox.stepDown)
+        btn_plus.clicked.connect(spinbox.stepUp)
+
+        layout.addWidget(btn_minus)
+        layout.addWidget(spinbox)
+        layout.addWidget(btn_plus)
+
+        return container
+
+    def initParamsTab(self):
+        """Шаг 3: Деформация (Параметры нейросети)"""
+        layout = QVBoxLayout(self.tab_params)
+
+        grp = QGroupBox("Настройки алгоритма")
+        grp.setStyleSheet("""
+            QGroupBox { 
+                color: #ffffff; 
+                border: 1px solid #555; 
+                margin-top: 15px; 
+                padding-top: 15px; 
+                font-weight: bold;
+            }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+            QLabel { color: #e0e0e0; font-weight: normal; border: none; }
+            QComboBox { 
+                background-color: #333333; 
+                color: #ffffff; 
+                border: 1px solid #666666; 
+                padding: 4px;
+                border-radius: 3px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #333333;
+                color: #ffffff;
+                selection-background-color: #b31b1b;
+                selection-color: #ffffff;
+                border: 1px solid #555;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox:disabled { background-color: #222222; color: #777777; }
+        """)
+
+        glayout = QGridLayout(grp)
+        glayout.setSpacing(10)
+
+        # 1. Деформация
+        glayout.addWidget(QLabel("Деформация:"), 0, 0)
+        self.cb_def_type = QComboBox()
+        self.cb_def_type.addItems(["Мягко", "Нормально", "Жестко"])
+        self.cb_def_type.setCurrentIndex(1)
+        glayout.addWidget(self.cb_def_type, 0, 1)
+
+        # 2. Дискретизация
+        glayout.addWidget(QLabel("Дискретизация:"), 1, 0)
+        self.cb_samples = QComboBox()
+        self.cb_samples.addItems(["Свое значение", "Нет", "Грубо", "Средне", "Подробно"])
+        self.cb_samples.setCurrentIndex(3)
+        glayout.addWidget(self.cb_samples, 1, 1)
+
+        # 3. Облако точек (ИСПОЛЬЗУЕМ ОБЕРТКУ)
+        glayout.addWidget(QLabel("Облако точек:"), 2, 0)
+        self.sb_points = QSpinBox()
+        self.sb_points.setRange(1000, 500000)
+        self.sb_points.setSingleStep(1000)
+        self.sb_points.setValue(20000)
+
+        self.sb_points_wrapper = self.create_spinbox_wrapper(self.sb_points)
+        self.sb_points_wrapper.setEnabled(False)  # Изначально заблокировано пресетом
+        glayout.addWidget(self.sb_points_wrapper, 2, 1)
+
+        self.cb_samples.currentIndexChanged.connect(self._on_sample_type_changed)
+
+        layout.addWidget(grp)
+
+        # 4. Переключатели визуализации
+        self.chk_preview_pts = QCheckBox("Предпросмотр облака точек")
+        self.chk_preview_pts.setStyleSheet("margin-top: 5px; margin-bottom: 5px; color: #ffffff; font-weight: bold;")
+
+        self.chk_show_vectors = QCheckBox("Векторы смещения (стрелки)")
+        self.chk_show_vectors.setStyleSheet("margin-top: 5px; margin-bottom: 5px; color: #f39c12; font-weight: bold;")
+
+        h_toggle = QHBoxLayout()
+        h_toggle.addWidget(self.chk_show_vectors)
+        h_toggle.addStretch()
+        h_toggle.addWidget(self.chk_preview_pts)
+        layout.addLayout(h_toggle)
+
+        # --- НОВЫЙ БЛОК: Кнопка запуска Деформации ---
+        self.def_stack = QStackedWidget()
+
+        page_start = QWidget()
+        p0_layout = QVBoxLayout(page_start)
+        self.btn_run_def = QPushButton("⚡ РАССЧИТАТЬ ДЕФОРМАЦИЮ")
+        self.btn_run_def.setCursor(Qt.PointingHandCursor)
+        self.btn_run_def.setStyleSheet(
+            "height: 60px; background-color: #2c3e50; color: white; font-weight: bold; font-size: 14px; border-radius: 5px;")
+        p0_layout.addWidget(self.btn_run_def)
+        p0_layout.addStretch()
+        self.def_stack.addWidget(page_start)
+
+        page_prog = QWidget()
+        p1_layout = QVBoxLayout(page_prog)
+        self.lbl_def_status = QLabel("Обучение сети и симуляция усадки...")
+        self.lbl_def_status.setAlignment(Qt.AlignCenter)
+        self.lbl_def_status.setStyleSheet("color: white; font-weight: bold;")
+
+        self.def_progress_bar = QProgressBar()
+        self.def_progress_bar.setRange(0, 100)
+        self.def_progress_bar.setFixedHeight(30)
+        self.def_progress_bar.setStyleSheet(
+            "QProgressBar { border: 1px solid #555; border-radius: 3px; text-align: center; color: white; } QProgressBar::chunk { background-color: #c0392b; }")
+
+        self.btn_cancel_def = QPushButton("❌ Отменить")
+        self.btn_cancel_def.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel_def.setStyleSheet(
+            "background-color: #444; color: white; padding: 5px; border-radius: 3px; font-weight: bold;")
+
+        p1_layout.addWidget(self.lbl_def_status)
+        p1_layout.addWidget(self.def_progress_bar)
+        p1_layout.addWidget(self.btn_cancel_def, 0, Qt.AlignCenter)
+        p1_layout.addStretch()
+        self.def_stack.addWidget(page_prog)
+
+        layout.addWidget(self.def_stack)
+        # ---------------------------------------------
+
+        layout.addStretch()
+
+    def _on_sample_type_changed(self, idx):
+        """Блокирует/разблокирует КОНТЕЙНЕР с точками в зависимости от пресета"""
+        presets = {1: 500000, 2: 5000, 3: 20000, 4: 200000}
+
+        if idx == 0:
+            self.sb_points_wrapper.setEnabled(True)  # Включаем и поле, и кнопки +/-
+        else:
+            self.sb_points_wrapper.setEnabled(False)  # Выключаем всё вместе
+            self.sb_points.setValue(presets.get(idx, 20000))
+
+    def initCompTab(self):
+        """Шаг 4: Компенсация и Расчет"""
+        layout = QVBoxLayout(self.tab_comp)
+
+        # --- БЛОК: Масштабирование вектора (Анизотропное XY / Z) ---
+        grp_factor = QGroupBox("Масштабирование результата")
+        grp_factor.setStyleSheet("""
+                    QGroupBox { 
+                        color: #ffffff; 
+                        border: 1px solid #555; 
+                        margin-top: 15px; 
+                        padding-top: 15px; 
+                        font-weight: bold; 
+                    }
+                    QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
+                    QLabel { color: #e0e0e0; font-weight: normal; border: none; }
+                """)
+        flayout = QVBoxLayout(grp_factor)
+
+        self.chk_link_factor = QCheckBox("Связать XY и Z (Изотропная усадка)")
+        self.chk_link_factor.setChecked(True)
+        self.chk_link_factor.setCursor(Qt.PointingHandCursor)
+        self.chk_link_factor.setStyleSheet("color: #5dade2; margin-bottom: 5px;")
+        flayout.addWidget(self.chk_link_factor)
+
+        grid_factors = QGridLayout()
+
+        # Коэффициент в плоскости слоев (XY)
+        grid_factors.addWidget(QLabel("Коэфф. XY (слои):"), 0, 0)
+        self.sb_factor = QDoubleSpinBox()
+        self.sb_factor.setRange(0.1, 5.0)
+        self.sb_factor.setSingleStep(0.1)
+        self.sb_factor.setValue(1.0)
+        self.sb_factor_wrapper = self.create_spinbox_wrapper(self.sb_factor)
+        grid_factors.addWidget(self.sb_factor_wrapper, 0, 1)
+
+        # Коэффициент по высоте построения (Z)
+        grid_factors.addWidget(QLabel("Коэфф. Z (рост):"), 1, 0)
+        self.sb_factor_z = QDoubleSpinBox()
+        self.sb_factor_z.setRange(0.1, 5.0)
+        self.sb_factor_z.setSingleStep(0.1)
+        self.sb_factor_z.setValue(1.0)
+        self.sb_factor_z_wrapper = self.create_spinbox_wrapper(self.sb_factor_z)
+        self.sb_factor_z_wrapper.setEnabled(False)  # Заблокировано при связанном режиме
+        grid_factors.addWidget(self.sb_factor_z_wrapper, 1, 1)
+
+        flayout.addLayout(grid_factors)
+        layout.addWidget(grp_factor)
+        # -------------------------------------------
 
         self.comp_stack = QStackedWidget()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        page_start = QWidget()
+        p0_layout = QVBoxLayout(page_start)
+        self.btn_run_comp = QPushButton("⚡ ЗАПУСТИТЬ КОМПЕНСАЦИЮ")
+        self.btn_run_comp.setCursor(Qt.PointingHandCursor)
+        self.btn_run_comp.setStyleSheet(
+            "height: 60px; background-color: #c0392b; color: white; font-weight: bold; font-size: 14px; border-radius: 5px;")
+        p0_layout.addWidget(self.btn_run_comp)
+        p0_layout.addStretch()
+        self.comp_stack.addWidget(page_start)
 
-        set_widget = QWidget()
-        # Точка (.QWidget) гарантирует, что стиль применится только к фону, не ломая ползунки!
-        set_widget.setStyleSheet(".QWidget { background-color: #2b2b2b; }")
-        set_layout = QVBoxLayout(set_widget)
-
-        self.add_slider(set_layout, "Разрешение маячков (>10k для мощных ПК)", 1000, 20000, 4000, 500, "points")
-        self.add_slider(set_layout, "Жесткость RBF поля", 1, 150, 50, 1, "smooth", divider=10.0)
-        self.chk_remesh = QCheckBox("Использовать Умный Remesh")
-        self.chk_remesh.setChecked(True)
-        set_layout.addWidget(self.chk_remesh)
-        self.add_slider(set_layout, "Шаг сетки Remesh (мм)", 2, 30, 10, 1, "edge_len", divider=10.0)
-
-        adv_lbl = QLabel("--- ПРОДВИНУТЫЕ НАСТРОЙКИ ---")
-        adv_lbl.setStyleSheet("color: red; font-weight: bold; margin-top: 10px;")
-        set_layout.addWidget(adv_lbl)
-
-        self.add_slider(set_layout, "Область влияния RBF (Соседей) [0 = Глобально]", 0, 2000, 300, 50, "neighbors")
-        self.add_slider(set_layout, "Лимит аномалий (мм)", 5, 50, 20, 1, "limit", divider=10.0)
-        self.add_slider(set_layout, "Строгость нормалей", 30, 99, 80, 1, "norm", divider=100.0)
-        self.chk_anchor = QCheckBox("Якорить пустоты сканера (0мм)")
-        self.chk_anchor.setChecked(True)
-        set_layout.addWidget(self.chk_anchor)
-
-        scroll.setWidget(set_widget)
-        self.comp_stack.addWidget(scroll)
-
-        self.progress_widget = QWidget()
-        prog_layout = QVBoxLayout(self.progress_widget)
-        prog_layout.setAlignment(Qt.AlignCenter)
-
-        self.lbl_progress_status = QLabel("Расчет матрицы предеформации...\nОжидайте завершения.")
-        self.lbl_progress_status.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
+        page_prog = QWidget()
+        p1_layout = QVBoxLayout(page_prog)
+        self.lbl_progress_status = QLabel("Обучение сети и деформация...")
         self.lbl_progress_status.setAlignment(Qt.AlignCenter)
-
+        self.lbl_progress_status.setStyleSheet("color: white; font-weight: bold;")
         self.comp_progress_bar = QProgressBar()
         self.comp_progress_bar.setRange(0, 100)
-        self.comp_progress_bar.setValue(0)
-        self.comp_progress_bar.setFixedSize(320, 35)
-        self.comp_progress_bar.setTextVisible(True)
-        self.comp_progress_bar.setStyleSheet("""
-                    QProgressBar { border: 2px solid #555; border-radius: 5px; text-align: center; color: white; font-weight: bold; font-size: 14px; background-color: #333; }
-                    QProgressBar::chunk { background-color: #c0392b; border-radius: 3px; }
-                """)
+        self.comp_progress_bar.setFixedHeight(30)
+        self.comp_progress_bar.setStyleSheet(
+            "QProgressBar { border: 1px solid #555; border-radius: 3px; text-align: center; color: white; } QProgressBar::chunk { background-color: #c0392b; }")
 
-        self.btn_cancel_comp = QPushButton("❌ Отменить расчет")
-        self.btn_cancel_comp.setFixedSize(180, 35)
+        self.btn_cancel_comp = QPushButton("❌ Отменить")
         self.btn_cancel_comp.setCursor(Qt.PointingHandCursor)
-        self.btn_cancel_comp.setStyleSheet("""
-                    QPushButton { background-color: #444; color: white; border: 1px solid #555; border-radius: 4px; font-weight: bold; font-size: 13px; }
-                    QPushButton:hover { background-color: #c0392b; border: 1px solid #ff5555; }
-                """)
+        self.btn_cancel_comp.setStyleSheet(
+            "background-color: #444; color: white; padding: 5px; border-radius: 3px; font-weight: bold;")
 
-        prog_layout.addWidget(self.lbl_progress_status)
-        prog_layout.addSpacing(20)
-        prog_layout.addWidget(self.comp_progress_bar)
-        prog_layout.addSpacing(15)
-        prog_layout.addWidget(self.btn_cancel_comp, 0, Qt.AlignCenter)
+        p1_layout.addWidget(self.lbl_progress_status)
+        p1_layout.addWidget(self.comp_progress_bar)
+        p1_layout.addWidget(self.btn_cancel_comp, 0, Qt.AlignCenter)
+        p1_layout.addStretch()
+        self.comp_stack.addWidget(page_prog)
 
-        self.comp_stack.addWidget(self.progress_widget)
-        l.addWidget(self.comp_stack)
-
-        self.btn_run_comp = QPushButton("⚡ ЗАПУСТИТЬ ПРЕДЕФОРМАЦИЮ")
-        self.btn_run_comp.setStyleSheet(
-            "height: 50px; background-color: #c0392b; color: white; font-weight: bold; font-size: 14px;")
-        l.addWidget(self.btn_run_comp)
+        layout.addWidget(self.comp_stack)
 
         self.btn_save = QPushButton("💾 Сохранить Результат")
         self.btn_save.setEnabled(False)
-        l.addWidget(self.btn_save)
+        self.btn_save.setCursor(Qt.PointingHandCursor)
+        self.btn_save.setStyleSheet(
+            "height: 40px; background-color: #2c3e50; color: white; font-weight: bold; border-radius: 3px;")
+        layout.addWidget(self.btn_save)
 
     def init_recent_page(self):
         page = QWidget()

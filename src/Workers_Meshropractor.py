@@ -4,9 +4,17 @@ import trimesh
 import trimesh.remesh
 from scipy.interpolate import RBFInterpolator
 import concurrent.futures
+import pyvista as pv
+try:
+    from services.deformation_service import DeformationService
+except ImportError:
+    pass # Обработаем ошибку внутри потока
 
 from PySide6.QtCore import QThread, Signal
 #from CL_Slicer import slice_stl_to_cls
+
+# Импортируем наш собственный алгоритм деформации
+from ml_deformation import NativeDeformationService
 
 # Пытаемся безопасно импортировать Open3D
 print("[DEBUG] Перед import open3d...", flush=True)
@@ -42,77 +50,196 @@ class SlicerWorker(QThread):
         except Exception as e:
             self.error.emit(f"Ошибка слайсинга: {str(e)}")
 
+
 # ==========================================
-# ПОТОК 1: СОВМЕЩЕНИЕ (ICP - Iterative Closest Point)
+# ПОТОК 1: СОВМЕЩЕНИЕ (Ультимативный GOM-style ICP)
 # ==========================================
 class AlignmentThread(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(object)
 
-    def __init__(self, cad_mesh, scan_mesh, cad_pts, scan_pts):
+    def __init__(self, cad_mesh, scan_mesh, cad_pts, scan_pts, settings):
         super().__init__()
         self.cad_mesh = cad_mesh.copy()
         self.scan_mesh = scan_mesh.copy()
         self.cad_pts = cad_pts
         self.scan_pts = scan_pts
+        self.settings = settings
 
     def run(self):
         try:
             if not HAS_O3D:
-                self.log_signal.emit("[!] ОШИБКА: Open3D не установлен. Совмещение невозможно.")
+                self.log_signal.emit("[!] ОШИБКА: Open3D не установлен.")
                 return
 
-            self.log_signal.emit("\n=== ЗАПУСК ICP СОВМЕЩЕНИЯ ===")
+            self.log_signal.emit("\n=== ЗАПУСК ВЫРАВНИВАНИЯ ===")
+
+            # --- ФИКС 1: Точные CAD-нормали ---
+            # Берем математически идеальные нормали граней из Trimesh, без аппроксимации!
+            target_pc = o3d.geometry.PointCloud()
+            target_pc.points = o3d.utility.Vector3dVector(np.array(self.cad_mesh.vertices))
+            target_pc.normals = o3d.utility.Vector3dVector(np.array(self.cad_mesh.vertex_normals))
+
             source_pc = o3d.geometry.PointCloud()
             source_pc.points = o3d.utility.Vector3dVector(np.array(self.scan_mesh.vertices))
 
-            target_pc = o3d.geometry.PointCloud()
-            target_pc.points = o3d.utility.Vector3dVector(np.array(self.cad_mesh.vertices))
+            bbox = target_pc.get_max_bound() - target_pc.get_min_bound()
+            max_bound = float(np.max(bbox))
+
+            self.log_signal.emit("   -> Расчет нормалей для скана...")
+            # Для скана нормали всё еще нужно считать, чтобы сгладить микро-шероховатость SLM
+            source_pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=max_bound * 0.01, max_nn=30))
 
             trans_init = np.eye(4)
 
-            # Грубое совмещение
+            # --- РЕЖИМ 1: РУЧНОЙ (По маркерам) ---
             if len(self.cad_pts) >= 3 and len(self.cad_pts) == len(self.scan_pts):
-                self.log_signal.emit("2. Грубое позиционирование (ПО МАРКЕРАМ)...")
+                self.log_signal.emit("1. Предварительное выравнивание (ПО МАРКЕРАМ)...")
                 pcd_scan_pts = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(np.array(self.scan_pts)))
                 pcd_cad_pts = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(np.array(self.cad_pts)))
                 corres = o3d.utility.Vector2iVector(np.array([[i, i] for i in range(len(self.scan_pts))]))
                 estimator = o3d.pipelines.registration.TransformationEstimationPointToPoint()
                 trans_init = estimator.compute_transformation(pcd_scan_pts, pcd_cad_pts, corres)
+
+            # --- РЕЖИМ 2: АВТОМАТИКА (Best-Fit) ---
             else:
-                self.log_signal.emit("2. Грубое позиционирование (ПО ЦЕНТРАМ МАСС)...")
-                trans_init[:3, 3] = target_pc.get_center() - source_pc.get_center()
+                self.log_signal.emit("1. Предварительное выравнивание (BEST-FIT)...")
+                target_center = target_pc.get_center()
+                source_center = source_pc.get_center()
+                trans_init[:3, 3] = target_center - source_center
 
-            if self.isInterruptionRequested():
-                self.log_signal.emit("\n[i] Совмещение отменено пользователем.")
-                return
+                search_time = self.settings.get('search_time', 1)
 
-            # Тонкое совмещение
-            self.log_signal.emit("3. Тонкое совмещение ICP (до 2000 итераций)...")
-            reg_p2p = o3d.pipelines.registration.registration_icp(
-                source_pc, target_pc, 5.0, trans_init,
-                o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-                o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=2000)
-            )
+                if search_time > 0:
+                    self.log_signal.emit("   -> Глобальный анализ геометрии...")
+                    voxel_size = max_bound * (0.05 if search_time == 1 else 0.02)
+                    search_radius = float(voxel_size * 1.5)
 
-            self.log_signal.emit(f"   -> УСПЕХ! Точность наложения: {reg_p2p.fitness:.4f}")
-            self.log_signal.emit("4. Применение матрицы к исходной сетке...")
+                    source_down = source_pc.voxel_down_sample(voxel_size)
+                    target_down = target_pc.voxel_down_sample(voxel_size)
+                    source_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 2, max_nn=30))
+                    # У target_down нормали пересчитаются корректно из уже заданных
+                    target_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 2, max_nn=30))
+
+                    source_fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+                        source_down, o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 5, max_nn=100))
+                    target_fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+                        target_down, o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 5, max_nn=100))
+
+                    if search_time == 1:
+                        self.log_signal.emit("   -> Поиск совпадений (Fast Global Registration)...")
+                        res_global = o3d.pipelines.registration.registration_fgr_based_on_feature_matching(
+                            source_down, target_down, source_fpfh, target_fpfh,
+                            o3d.pipelines.registration.FastGlobalRegistrationOption(
+                                maximum_correspondence_distance=search_radius
+                            )
+                        )
+                    else:
+                        self.log_signal.emit("   -> Глубокий поиск совпадений (RANSAC)...")
+                        res_global = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+                            source_down, target_down, source_fpfh, target_fpfh, True,
+                            max_correspondence_distance=search_radius,
+                            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+                            ransac_n=3,
+                            checkers=[o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(search_radius)],
+                            criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(4000000, 0.999)
+                        )
+
+                    if res_global.fitness > 0.05:
+                        trans_init = res_global.transformation
+
+                if self.isInterruptionRequested(): return
+
+                self.log_signal.emit("   -> Анализ симметрии (Anti-Flip)...")
+                t_to_origin = np.eye(4);
+                t_to_origin[:3, 3] = -target_center
+                t_from_origin = np.eye(4);
+                t_from_origin[:3, 3] = target_center
+                flip_x_mat = np.diag([1, -1, -1, 1])
+                flip_y_mat = np.diag([-1, 1, -1, 1])
+
+                best_trans = trans_init
+                best_score = -1.0
+
+                for name, t_test in [("Нормаль", trans_init),
+                                     ("Флип X", t_from_origin @ flip_x_mat @ t_to_origin @ trans_init),
+                                     ("Флип Y", t_from_origin @ flip_y_mat @ t_to_origin @ trans_init)]:
+                    res = o3d.pipelines.registration.registration_icp(
+                        source_pc, target_pc, max_bound * 0.08, t_test,
+                        o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=20)
+                    )
+                    score = res.fitness / (res.inlier_rmse + 1e-5)
+                    if score > best_score:
+                        best_score = score
+                        best_trans = res.transformation
+                        best_name = name
+
+                if best_name != "Нормаль":
+                    self.log_signal.emit(
+                        f"   -> [АВТО-КОРРЕКЦИЯ] Скан был перевернут. Применен разворот ({best_name}).")
+                trans_init = best_trans
+
+            if self.isInterruptionRequested(): return
+
+            # --- МАГИЯ 2: Ультра-точный Robust ICP ---
+            rmse = 0.0
+            if self.settings.get('do_icp', True):
+                self.log_signal.emit("2. Точная подгонка поверхностей (Robust Multi-scale ICP)...")
+
+                # ФИКС 2: Добавлен 4-й шаг! (0.2% от габарита).
+                # На детали 150 мм это всего 0.3 мм. Алгоритм сбросит из расчетов весь порошок и мусор.
+                radii = [max_bound * 0.08, max_bound * 0.02, max_bound * 0.005, max_bound * 0.002]
+                iters = [50, 100, 200, 300]
+
+                for i, (r, it) in enumerate(zip(radii, iters)):
+                    self.log_signal.emit(f"   -> Итерация {i + 1}/{len(radii)} (Точность захвата: {r:.2f} мм)...")
+
+                    loss_func = o3d.pipelines.registration.TukeyLoss(k=r)
+                    estimation = o3d.pipelines.registration.TransformationEstimationPointToPlane(loss_func)
+
+                    reg_p2p = o3d.pipelines.registration.registration_icp(
+                        source_pc, target_pc, r, trans_init,
+                        estimation,
+                        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=it)
+                    )
+                    trans_init = reg_p2p.transformation
+                    rmse = reg_p2p.inlier_rmse
+
+                if reg_p2p.fitness == 0:
+                    self.log_signal.emit("[!] ПРЕДУПРЕЖДЕНИЕ: Совмещение провалено.")
+                    return
+            else:
+                # ФИКС: Честная оценка выравнивания без ICP
+                eval_thresh = max_bound * 0.02  # Берем коридор побольше (2% от габарита)
+                eval_res = o3d.pipelines.registration.evaluate_registration(source_pc, target_pc, eval_thresh,
+                                                                                trans_init)
+
+                # Если совпало меньше 30% площади скана - это 100% ошибка позиционирования
+                if eval_res.fitness < 0.3:
+                    self.log_signal.emit(
+                        f"[!] ВНИМАНИЕ: Детали пересеклись под углом! Перекрытие всего {eval_res.fitness * 100:.1f}%.")
+                    rmse = 999.9999  # Выдаем абсурдное значение, чтобы сбить "вранье"
+                else:
+                    rmse = eval_res.inlier_rmse
+
+            self.log_signal.emit(f"   -> УСПЕХ! Финальное отклонение (RMSE): {rmse:.4f} мм")
 
             transformed_scan = self.scan_mesh.copy()
-            transformed_scan.apply_transform(reg_p2p.transformation)
-            self.finished_signal.emit(transformed_scan)
+            transformed_scan.apply_transform(trans_init)
+
+            self.finished_signal.emit((transformed_scan, rmse))
 
         except Exception as e:
-            self.log_signal.emit(f"[!] ОШИБКА ICP: {str(e)}")
-
+            self.log_signal.emit(f"[!] ОШИБКА СОВМЕЩЕНИЯ: {str(e)}")
 
 # ==========================================
-# ПОТОК 2: ПРЕДЕФОРМАЦИЯ (RBF)
+# ПОТОК 2: ML ПРЕДЕФОРМАЦИЯ (Собственная нейросеть)
 # ==========================================
 class CompensationThread(QThread):
     log_signal = Signal(str)
     finished_signal = Signal(object)
-    progress_signal = Signal(int)  # <--- НОВЫЙ СИГНАЛ ПРОГРЕССА
+    progress_signal = Signal(int)
 
     def __init__(self, cad_mesh, scan_mesh, settings):
         super().__init__()
@@ -120,193 +247,66 @@ class CompensationThread(QThread):
         self.scan_mesh = scan_mesh
         self.settings = settings
 
-    def log(self, text, replace=False):
-        self.log_signal.emit(f"{'REPLACE_FLAG' if replace else ''}{text}")
+    def log(self, text):
+        self.log_signal.emit(text)
 
     def run(self):
         try:
-            if not HAS_O3D:
-                self.log("\n[!] ОШИБКА: Open3D не установлен.")
-                return
+            self.log("\n=== ЗАПУСК ML ПРЕДЕФОРМАЦИИ (Своя нейросеть) ===")
+            self.progress_signal.emit(5)
 
-            self.log("\n=== ЗАПУСК ПРЕДЕФОРМАЦИИ (RBF) ===")
-            self.progress_signal.emit(5)  # Старт
-
-            cad_mesh, scan_mesh, s = self.cad_mesh, self.scan_mesh, self.settings
-
-            # 1. Ремешинг
-            if s["use_remesh"]:
-                self.log(f"1. Умный Ремешинг (Шаг: {s['edge_len']} мм)...")
-                v, f = trimesh.remesh.subdivide_to_size(cad_mesh.vertices, cad_mesh.faces, max_edge=s['edge_len'])
-                cad_mesh = trimesh.Trimesh(vertices=v, faces=f)
+            # Вызываем НАШ алгоритм из файла ml_deformation.py
+            deformer = NativeDeformationService()
 
             if self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
+                self.log("\n[i] Расчет отменен.")
                 return
-            self.progress_signal.emit(15)
 
-            # 2. Маячки
-            self.log(f"2. Установка маячков ({s['points']} шт.)...")
-            ctrl_cad_verts, face_indices = trimesh.sample.sample_surface(cad_mesh, s['points'])
-            ctrl_cad_normals = np.array(cad_mesh.face_normals[face_indices])
+            self.log("Конвертация геометрии (Trimesh -> PyVista)...")
+            faces_cad = np.pad(self.cad_mesh.faces, ((0, 0), (1, 0)), constant_values=3)
+            pv_cad = pv.PolyData(self.cad_mesh.vertices, faces_cad)
 
-            if self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
-                return
-            self.progress_signal.emit(25)
+            faces_scan = np.pad(self.scan_mesh.faces, ((0, 0), (1, 0)), constant_values=3)
+            pv_scan = pv.PolyData(self.scan_mesh.vertices, faces_scan)
 
-            # 3. Raycasting
-            self.log("3. Аппаратная трассировка (Open3D Tensor Engine)...")
-            scan_tmesh = o3d.t.geometry.TriangleMesh(
-                o3d.core.Tensor(np.array(scan_mesh.vertices, dtype=np.float32)),
-                o3d.core.Tensor(np.array(scan_mesh.faces, dtype=np.int32))
+            def progress_cb(percent):
+                self.progress_signal.emit(int(percent))
+
+            def log_cb(msg):
+                self.log(msg)
+
+            # Запуск НАШЕЙ нейросети с передачей коллбека отмены
+            self.log("Обучение модели и деформация...")
+            pv_result = deformer.create_deformed_model(
+                source_mesh=pv_cad,
+                target_mesh=pv_scan,
+                max_dev=self.settings.get('limit', 5.0),
+                factor=self.settings.get('factor', 1.0),
+                deformation_type=self.settings.get('def_type', 1),
+                is_compensation=self.settings.get('is_comp', True),
+                progress_callback=progress_cb,
+                log_callback=log_cb,
+                cancel_callback=self.isInterruptionRequested  # <-- Проверка флага отмены
             )
-            scene = o3d.t.geometry.RaycastingScene()
-            scene.add_triangles(scan_tmesh)
 
-            def get_hits_o3d(origins, directions, task_name):
-                self.log(f"   -> {task_name}...")
-                rays = np.hstack((origins, directions)).astype(np.float32)
-                ans = scene.cast_rays(o3d.core.Tensor(rays))
-                t_hit = ans['t_hit'].numpy()
-                tri_idx = ans['primitive_ids'].numpy()
-                valid = np.isfinite(t_hit)
-                locs = origins[valid] + directions[valid] * t_hit[valid][:, None]
-                return locs, np.where(valid)[0], tri_idx[valid]
-
-            locs_out, ray_idx_out, tri_idx_out = get_hits_o3d(ctrl_cad_verts, ctrl_cad_normals, "Поиск утолщений")
-
-            if self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
+            # Если расчет прерван пользователем — корректно выходим без падения
+            if pv_result is None or self.isInterruptionRequested():
+                self.log("\n[i] Расчет остановлен. Контекст GPU очищен.")
                 return
 
-            locs_in, ray_idx_in, tri_idx_in = get_hits_o3d(ctrl_cad_verts, -ctrl_cad_normals, "Поиск усадки")
+            self.progress_signal.emit(95)
+            self.log("Обратная конвертация (PyVista -> Trimesh)...")
 
-            if self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
-                return
-            self.progress_signal.emit(40)
+            faces_result = pv_result.faces.reshape(-1, 4)[:, 1:]
+            result_trimesh = trimesh.Trimesh(vertices=pv_result.points, faces=faces_result)
 
-            # 4. Анализ попаданий
-            def process_hits(ray_origins, cad_normals, locs, index_ray, index_tri, mesh, strictness):
-                if len(locs) == 0: return {}
-                hit_distances = np.linalg.norm(locs - ray_origins[index_ray], axis=1)
-                hit_normals = mesh.face_normals[index_tri]
-                dots = np.sum(cad_normals[index_ray] * hit_normals, axis=1)
-                valid_mask = (hit_distances < s['limit'] + 1.0) & (dots > strictness)
-
-                best_hits = {}
-                for r_idx, loc, dist in zip(index_ray[valid_mask], locs[valid_mask], hit_distances[valid_mask]):
-                    if r_idx not in best_hits or dist < best_hits[r_idx][1]:
-                        best_hits[r_idx] = (loc, dist)
-                return best_hits
-
-            hits_out = process_hits(ctrl_cad_verts, ctrl_cad_normals, locs_out, ray_idx_out, tri_idx_out, scan_mesh,
-                                    s['norm'])
-            hits_in = process_hits(ctrl_cad_verts, ctrl_cad_normals, locs_in, ray_idx_in, tri_idx_in, scan_mesh,
-                                   s['norm'])
-
-            self.log("   -> Анализ пустот и аномалий...")
-            final_ctrl_cad, final_error_vectors = [], []
-
-            for i in range(s['points']):
-                best_loc, best_dist = None, float('inf')
-                if i in hits_out and hits_out[i][1] < best_dist: best_loc, best_dist = hits_out[i]
-                if i in hits_in and hits_in[i][1] < best_dist: best_loc, best_dist = hits_in[i]
-
-                if best_loc is not None:
-                    error_vec = best_loc - ctrl_cad_verts[i]
-                    if np.linalg.norm(error_vec) > s['limit']:
-                        final_ctrl_cad.append(ctrl_cad_verts[i])
-                        final_error_vectors.append(np.zeros(3))
-                    else:
-                        final_ctrl_cad.append(ctrl_cad_verts[i])
-                        final_error_vectors.append(error_vec)
-                elif s['anchor']:
-                    final_ctrl_cad.append(ctrl_cad_verts[i])
-                    final_error_vectors.append(np.zeros(3))
-
-            # ЗАЩИТА: если лучи вообще не попали в скан (модели не совмещены ICP,
-            # скан обрезан, или "Строгость нормалей"/"Лимит аномалий" выставлены
-            # слишком жестко), final_ctrl_cad останется пустым или почти пустым.
-            # Передача такого вырожденного набора точек в RBFInterpolator/scipy
-            # может привести не к понятной Python-ошибке, а к падению нативного
-            # кода — поэтому проверяем ДО вызова RBF и выходим с понятным логом.
-            if len(final_ctrl_cad) < 4:
-                self.log(f"\n[!] ОШИБКА: Найдено только {len(final_ctrl_cad)} валидных точек совпадения "
-                         f"CAD/скан (нужно минимум 4). Проверьте: совмещены ли модели через ICP (Шаг 1), "
-                         f"не слишком ли строгие 'Строгость нормалей' / 'Лимит аномалий', "
-                         f"включен ли 'Якорить пустоты сканера'.")
-                return
-
-            if self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
-                return
-            self.progress_signal.emit(50)
-
-            # 5. Математика RBF
-            self.log("4. Расчет RBF-матрицы деформации...")
-            if s['neighbors'] > 0:
-                self.log(f"   -> Режим: Локальный (Влияние на {s['neighbors']} точек)")
-                rbf = RBFInterpolator(np.array(final_ctrl_cad), np.array(final_error_vectors),
-                                      kernel='thin_plate_spline', smoothing=s['smooth'], neighbors=s['neighbors'])
-            else:
-                self.log("   -> Режим: Глобальный (Максимальная гладкость, требует много ОЗУ!)")
-                rbf = RBFInterpolator(np.array(final_ctrl_cad), np.array(final_error_vectors),
-                                      kernel='thin_plate_spline', smoothing=s['smooth'])
-
-            if self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
-                return
-            self.progress_signal.emit(60)  # RBF матрица посчитана
-
-            # 6. МНОГОПОТОЧНАЯ ДЕФОРМАЦИЯ
-            self.log("5. Пакетная деформация (Многопоточный режим)...")
-            cad_verts_all = np.array(cad_mesh.vertices)
-            compensated_verts = np.zeros_like(cad_verts_all)
-            chunk_size = 50000
-
-            def process_rbf_chunk(start_idx):
-                end_idx = min(start_idx + chunk_size, len(cad_verts_all))
-                chunk = cad_verts_all[start_idx:end_idx]
-                return start_idx, end_idx, chunk - (rbf(chunk) * 1.0)
-
-            starts = list(range(0, len(cad_verts_all), chunk_size))
-            total_chunks = len(starts)
-            completed = 0
-
-            cancelled = False
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(process_rbf_chunk, start_idx) for start_idx in starts]
-                for future in concurrent.futures.as_completed(futures):
-                    if self.isInterruptionRequested():
-                        # НЕ убиваем поток снаружи и НЕ прерываем уже стартовавшие
-                        # задачи силой — просто отменяем то, что еще не запустилось,
-                        # и даем executor'у (блок with) штатно дождаться завершения
-                        # уже выполняющихся чанков. Это медленнее, чем terminate(),
-                        # зато безопасно для памяти процесса.
-                        for f in futures:
-                            f.cancel()
-                        cancelled = True
-                        break
-
-                    start_idx, end_idx, result_chunk = future.result()
-                    compensated_verts[start_idx:end_idx] = result_chunk
-                    completed += 1
-
-                    # Плавно заполняем прогресс-бар от 60% до 100%
-                    current_progress = 60 + int((completed / total_chunks) * 40)
-                    self.progress_signal.emit(current_progress)
-
-            if cancelled or self.isInterruptionRequested():
-                self.log("\n[i] Расчет отменен пользователем.")
-                return
-
-            cad_mesh.vertices = compensated_verts
-            self.log("\n=== ГОТОВО! МОДЕЛЬ УСПЕШНО ДЕФОРМИРОВАНА ===")
+            # Сохраняем векторное поле в метаданные меша для отображения стрелок
+            if "Deformation_Vectors" in pv_result.point_data:
+                result_trimesh.metadata["vectors"] = pv_result.point_data["Deformation_Vectors"]
 
             self.progress_signal.emit(100)
-            self.finished_signal.emit(cad_mesh)
+            self.log("\n=== ГОТОВО! МОДЕЛЬ УСПЕШНО ДЕФОРМИРОВАНА ===")
+            self.finished_signal.emit(result_trimesh)
 
         except Exception as e:
             self.log(f"\n[!] ОШИБКА: {str(e)}")
