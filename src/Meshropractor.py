@@ -28,9 +28,41 @@ from ml_deformation import NativeDeformationService
 if HAS_O3D:
     import open3d as o3d
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Это путь до папки src
-PROJECT_ROOT = os.path.dirname(BASE_DIR)              # Поднимаемся на уровень выше в корень
-ASSETS_DIR = os.path.join(PROJECT_ROOT, "assets")     # Теперь ищем assets в корне
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = getattr(sys, '_MEIPASS', os.path.dirname(BASE_DIR))
+ASSETS_DIR = os.path.join(PROJECT_ROOT, "assets")
+# === ПРИНУДИТЕЛЬНЫЙ DARK MODE ДЛЯ ВСЕХ ОКОН И ДИАЛОГОВ WINDOWS ===
+from PySide6.QtWidgets import QDialog
+
+def apply_dark_titlebar(widget):
+    """Окрашивает шапку и рамки окна в темно-серый цвет #2b2b2b в Windows 10/11"""
+    try:
+        hwnd = int(widget.winId())
+        val = ctypes.c_int(1)
+        # Атрибут 20: DWMWA_USE_IMMERSIVE_DARK_MODE (Win11 / Win10 20H1+), 19 для старых сборок Win10
+        if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(val), ctypes.sizeof(val)) != 0:
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 19, ctypes.byref(val), ctypes.sizeof(val))
+
+        # Атрибут 35 (Win 11): DWMWA_CAPTION_COLOR перебивает синий акцент Windows на #2b2b2b (COLORREF: 0x002B2B2B)
+        caption_color = ctypes.c_int(0x002B2B2B)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
+
+        # Атрибут 34 (Win 11): DWMWA_BORDER_COLOR делает внешнюю рамку окна черной
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(caption_color), ctypes.sizeof(caption_color))
+
+        # Атрибут 36 (Win 11): DWMWA_TEXT_COLOR делает текст заголовка белым
+        text_color = ctypes.c_int(0x00FFFFFF)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+    except Exception:
+        pass
+
+# Автоматически красим шапку любого диалога при его открытии
+_orig_dialog_showEvent = QDialog.showEvent
+def _dark_dialog_showEvent(self, event):
+    apply_dark_titlebar(self)
+    return _orig_dialog_showEvent(self, event)
+QDialog.showEvent = _dark_dialog_showEvent
+# =================================================================
 
 
 class MainWindow(QMainWindow):
@@ -108,6 +140,7 @@ class MainWindow(QMainWindow):
         self.ui.btn_save.clicked.connect(self.save_result)
         self.ui.btn_cancel_comp.clicked.connect(self.cancel_comp)
         self.def_count = 0
+        self.heat_count = 0
         self.comp_count = 0
 
         # Сигналы для Деформации
@@ -125,6 +158,7 @@ class MainWindow(QMainWindow):
         # Клик по ячейкам таблиц деформации (Затенение и Прозрачность)
         self.ui.tbl_cad.cellClicked.connect(lambda r, c: self.on_def_table_cell_clicked(self.ui.tbl_cad, r, c))
         self.ui.tbl_scan.cellClicked.connect(lambda r, c: self.on_def_table_cell_clicked(self.ui.tbl_scan, r, c))
+        self.ui.tbl_heat.cellClicked.connect(lambda r, c: self.on_def_table_cell_clicked(self.ui.tbl_heat, r, c))
         self.ui.tbl_res.cellClicked.connect(lambda r, c: self.on_def_table_cell_clicked(self.ui.tbl_res, r, c))
 
         # --- Подключение кнопок ленты Слайсера ---
@@ -362,9 +396,9 @@ class MainWindow(QMainWindow):
         vis_layout.addWidget(chk_vis)
         table.setCellWidget(row, 2, vis_container)
 
-        # Начальные параметры отображения (для CAD/Scan 20% прозрачности, для Def/Result 0% и сетка)
-        init_mode = "shaded_wire" if base_actor_key in ["Result", "Def"] else "shaded"
-        init_trans = 20 if base_actor_key in ["CAD", "Scan"] else 0
+        # Базовые параметры: 0% прозрачности и режим "Треугольники" для всех добавляемых моделей
+        init_mode = "triangles"
+        init_trans = 0
         self.def_actors_meta[actor_key] = {
             "last_visible_mode": init_mode,
             "transparency": init_trans
@@ -408,13 +442,20 @@ class MainWindow(QMainWindow):
         if self.actors.get(key):
             self.ui.plotter.remove_actor(self.actors[key])
 
-        op = 0.8 if key.startswith("CAD") or key.startswith("Scan") else 1.0
-
-        self.actors[key] = self.ui.plotter.add_mesh(
-            pv_mesh, color=self.ui.mesh_colors.get(key, "#d3d3d3"), opacity=op,
-            show_edges=(key.startswith("Result") or key.startswith("Def"))
+        # Прозрачность 0% (opacity = 1.0)
+        actor = self.ui.plotter.add_mesh(
+            pv_mesh, color=self.ui.mesh_colors.get(key, "#d3d3d3"), opacity=1.0
         )
-        self.actors[key].pickable = True
+        self.actors[key] = actor
+        actor.pickable = True
+
+        # Сразу включаем базовый режим "Треугольники" (плоское освещение + черная сетка ребер)
+        prop = actor.GetProperty()
+        prop.SetInterpolationToFlat()
+        prop.SetEdgeVisibility(True)
+        prop.SetEdgeColor(0.0, 0.0, 0.0)
+        prop.SetLineWidth(1.0)
+
         self.ui.plotter.reset_camera()
 
     def set_def_actor_visibility(self, table, row, actor_key, is_visible):
@@ -429,6 +470,12 @@ class MainWindow(QMainWindow):
             meta = self.def_actors_meta.get(actor_key, {})
             last_mode = meta.get("last_visible_mode", "shaded")
             self._apply_def_display_mode(table, row, actor_key, last_mode, sync_visible_checkbox=False)
+
+        # Скрываем шкалу значений вместе с моделью карты отклонений
+        if actor_key.startswith("Heatmap") and hasattr(self.ui.plotter, 'scalar_bars'):
+            for sb in self.ui.plotter.scalar_bars.values():
+                sb.SetVisibility(is_visible)
+            self.ui.plotter.render()
 
     def on_def_table_cell_clicked(self, table, row, column):
         """Открывает меню режимов затенения или прозрачности при клике по ячейке"""
@@ -505,7 +552,7 @@ class MainWindow(QMainWindow):
         if bbox_actor is not None:
             bbox_actor.SetVisibility(False)
 
-        meta = self.def_actors_meta.setdefault(actor_key, {"last_visible_mode": "shaded", "transparency": 0})
+        meta = self.def_actors_meta.setdefault(actor_key, {"last_visible_mode": "triangles", "transparency": 0})
         current_trans = meta.get("transparency", 0)
         prop.SetOpacity(1.0 - (current_trans / 100.0))
         prop.SetLighting(True)
@@ -1335,41 +1382,58 @@ class MainWindow(QMainWindow):
             pv_heatmap = self.trimesh_to_pyvista(self.scan_mesh)
             pv_heatmap['Deviation'] = signed_dists
             self.pv_heatmap = pv_heatmap
-            if self.actors["Heatmap"]: self.ui.plotter.remove_actor(self.actors["Heatmap"])
 
-            # ФИКС: Гасим CAD и Скан через новые таблицы
+            # Создаем запись в новой таблице "Карты отклонений"
+            self.heat_count += 1
+            actor_key = self.add_def_table_item(self.ui.tbl_heat, f"Карта {self.heat_count}.stl", "Heatmap", clear_table=False)
+
+            # Гасим CAD и Скан, чтобы не перекрывали тепловую карту
             self._set_table_visibility(self.ui.tbl_cad, False)
             self._set_table_visibility(self.ui.tbl_scan, False)
 
             limit = self.ui.sliders["heat_limit"][0].value() / self.ui.sliders["heat_limit"][1]
-            self.actors["Heatmap"] = self.ui.plotter.add_mesh(
+            heat_actor = self.ui.plotter.add_mesh(
                 pv_heatmap, scalars='Deviation', cmap='turbo', clim=[-limit, limit],
                 show_scalar_bar=True, scalar_bar_args={
                     'title': 'Отклонение (мм)', 'color': 'black', 'vertical': True,
                     'position_x': 0.88, 'position_y': 0.05, 'height': 0.9, 'width': 0.08,
                     'title_font_size': 18, 'label_font_size': 14, 'fmt': '%1.3f'
-                }
+                },
+                name=actor_key
             )
+            self.actors[actor_key] = heat_actor
+            self.actors["Heatmap"] = heat_actor
+
             self.ui.plotter.reset_camera()
-            self.log(f"✅ Готово! Красный = Наплыв, Синий = Усадка.")
+            self.log(f"✅ Готово! Модель 'Карта {self.heat_count}' добавлена в список.")
         except Exception as e:
             self.log(f"[!] Ошибка: {str(e)}")
         finally:
             self.ui.btn_heatmap.setEnabled(True)
 
     def update_heatmap_limit(self):
-        if self.actors.get("Heatmap") and hasattr(self.actors["Heatmap"].mapper, 'dataset') and self.ui.plotter:
-            limit = self.ui.sliders["heat_limit"][0].value() / self.ui.sliders["heat_limit"][1]
-            self.actors["Heatmap"].mapper.scalar_range = [-limit, limit]
-            self.ui.plotter.render()
+        if not getattr(self.ui, 'plotter', None): return
+        limit = self.ui.sliders["heat_limit"][0].value() / self.ui.sliders["heat_limit"][1]
+        for key, actor in self.actors.items():
+            if key.startswith("Heatmap") and actor and hasattr(actor, 'mapper') and hasattr(actor.mapper, 'dataset'):
+                actor.mapper.scalar_range = [-limit, limit]
+        self.ui.plotter.render()
 
     def clear_heatmap(self):
         self.clear_callouts()
-        if self.actors.get("Heatmap") and self.ui.plotter:
-            self.ui.plotter.remove_actor(self.actors["Heatmap"])
-            self.actors["Heatmap"] = None
+        for key in list(self.actors.keys()):
+            if key.startswith("Heatmap") and self.actors.get(key) and self.ui.plotter:
+                self.ui.plotter.remove_actor(self.actors[key])
+                self.actors[key] = None
 
-        # ФИКС: Включаем CAD и Скан обратно
+        if hasattr(self.ui.plotter, 'scalar_bars'):
+            for sb in list(self.ui.plotter.scalar_bars.values()):
+                self.ui.plotter.remove_actor(sb)
+            self.ui.plotter.scalar_bars.clear()
+
+        self.ui.tbl_heat.setRowCount(0)
+        self.pv_heatmap = None
+
         self._set_table_visibility(self.ui.tbl_cad, True)
         self._set_table_visibility(self.ui.tbl_scan, True)
         self.log("Отображение сброшено в базовый режим.")
@@ -1632,6 +1696,8 @@ class MainWindow(QMainWindow):
 
         self.ui.tbl_cad.setRowCount(0)
         self.ui.tbl_scan.setRowCount(0)
+        self.ui.tbl_heat.setRowCount(0)
+        self.heat_count = 0
         self.ui.tbl_res.setRowCount(0)
 
         self.ui.tbl_parts.setRowCount(0)

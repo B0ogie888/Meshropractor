@@ -968,7 +968,13 @@ class Ui_MainWindow(object):
         self.grp_scan.content_layout.addWidget(self.tbl_scan)
         content_layout.addWidget(self.grp_scan)
 
-        # 3. Группа Результаты
+        # 3. Группа Карта отклонений (Heatmap)
+        self.grp_heat = CollapsibleBox("▼ Карты отклонений")
+        self.tbl_heat = self._build_standard_part_table()
+        self.grp_heat.content_layout.addWidget(self.tbl_heat)
+        content_layout.addWidget(self.grp_heat)
+
+        # 4. Группа Результаты
         self.grp_res = CollapsibleBox("▼ Результаты (Компенсация)")
         self.tbl_res = self._build_standard_part_table()
         self.grp_res.content_layout.addWidget(self.tbl_res)
