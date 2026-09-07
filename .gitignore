@@ -2,9 +2,13 @@
 build/
 dist/
 output/
-*.spec
 
 # Игнорируем временные файлы Питона
 __pycache__/
 *.pyc
 .idea/
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.tmp
+.coverage

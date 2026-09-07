@@ -1,4 +1,8 @@
 import math
+from copy import deepcopy
+import trimesh
+from scipy.spatial import cKDTree
+from geometry_analysis import validate_deformation, sample_surface
 from typing import Callable, Optional, Sequence, Union
 
 import numpy as np
@@ -99,57 +103,24 @@ class NativeDeformationService:
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def _get_o3d_device(self):
-        """Определяет доступность CUDA для тензорного ядра Open3D без вывода C++ предупреждений."""
-        if self.device.type == "cuda":
-            try:
-                # Проверка сборки Open3D без провоцирования исключений в C++ ядре
-                if hasattr(o3d.core, 'cuda') and o3d.core.cuda.is_available():
-                    return o3d.core.Device("CUDA:0")
-            except Exception:
-                pass
-        return o3d.core.Device("CPU:0")
-
-    def _compute_deviations_o3d(self, source_mesh: pv.PolyData, target_mesh: pv.PolyData, max_dev: float, log_callback=None):
-        """
-        Векторизованная аппаратная трассировка лучей с автоматическим выбором GPU/CPU.
-        """
-        o3d_dev = self._get_o3d_device()
+    def _compute_deviations_o3d(self, source_mesh, target_mesh, max_dev, log_callback=None, cancel_callback=None):
+        # Open3D CPU raycasting works with standard wheels; PyTorch training may use CUDA.
         if log_callback:
-            dev_type = "NVIDIA CUDA" if o3d_dev.get_type() == o3d.core.Device.DeviceType.CUDA else "CPU (Многопоточный)"
-            log_callback(f"   -> Open3D Raycasting: модуль запущен на {dev_type}")
-
-        try:
-            tgt_tmesh = o3d.t.geometry.TriangleMesh(
-                o3d.core.Tensor(np.array(target_mesh.points, dtype=np.float32), device=o3d_dev),
-                o3d.core.Tensor(np.array(target_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.int32), device=o3d_dev)
-            )
-            scene = o3d.t.geometry.RaycastingScene()
-            scene.add_triangles(tgt_tmesh)
-
-            origins = source_mesh.points.astype(np.float32)
-            normals = source_mesh.point_normals.astype(np.float32)
-
-            rays_out = np.hstack((origins, normals)).astype(np.float32)
-            rays_in = np.hstack((origins, -normals)).astype(np.float32)
-
-            hit_out = scene.cast_rays(o3d.core.Tensor(rays_out, device=o3d_dev))['t_hit'].to(o3d.core.Device("CPU:0")).numpy()
-            hit_in = scene.cast_rays(o3d.core.Tensor(rays_in, device=o3d_dev))['t_hit'].to(o3d.core.Device("CPU:0")).numpy()
-        except Exception as e:
-            if log_callback:
-                log_callback(f"   -> [Fallback CPU] Переключение Raycasting на CPU из-за: {e}")
-            cpu_dev = o3d.core.Device("CPU:0")
-            tgt_tmesh = o3d.t.geometry.TriangleMesh(
-                o3d.core.Tensor(np.array(target_mesh.points, dtype=np.float32), device=cpu_dev),
-                o3d.core.Tensor(np.array(target_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.int32), device=cpu_dev)
-            )
-            scene = o3d.t.geometry.RaycastingScene()
-            scene.add_triangles(tgt_tmesh)
-            origins = source_mesh.points.astype(np.float32)
-            normals = source_mesh.point_normals.astype(np.float32)
-            hit_out = scene.cast_rays(o3d.core.Tensor(np.hstack((origins, normals)).astype(np.float32), device=cpu_dev))['t_hit'].numpy()
-            hit_in = scene.cast_rays(o3d.core.Tensor(np.hstack((origins, -normals)).astype(np.float32), device=cpu_dev))['t_hit'].numpy()
-
+            log_callback("   -> Open3D Raycasting: CPU; расчёт лучей пакетами")
+        scene = o3d.t.geometry.RaycastingScene()
+        scene.add_triangles(o3d.t.geometry.TriangleMesh(
+            o3d.core.Tensor(np.asarray(target_mesh.points, dtype=np.float32)),
+            o3d.core.Tensor(np.asarray(target_mesh.faces.reshape(-1, 4)[:, 1:], dtype=np.int32))))
+        origins = np.asarray(source_mesh.points, dtype=np.float32)
+        normals = np.asarray(source_mesh.point_normals, dtype=np.float32)
+        out_chunks, in_chunks = [], []
+        for start in range(0, len(origins), 100_000):
+            if cancel_callback and cancel_callback():
+                return np.empty((0, 3)), np.empty((0, 3))
+            points, directions = origins[start:start + 100_000], normals[start:start + 100_000]
+            out_chunks.append(scene.cast_rays(o3d.core.Tensor(np.hstack((points, directions))))['t_hit'].numpy())
+            in_chunks.append(scene.cast_rays(o3d.core.Tensor(np.hstack((points, -directions))))['t_hit'].numpy())
+        hit_out, hit_in = np.concatenate(out_chunks), np.concatenate(in_chunks)
         mask_out = np.isfinite(hit_out) & (hit_out < max_dev)
         mask_in = np.isfinite(hit_in) & (hit_in < max_dev)
 
@@ -170,7 +141,7 @@ class NativeDeformationService:
 
         return valid_points, deviations
 
-    def _predict_in_batches(self, model: nn.Module, all_pts_tensor: torch.Tensor, batch_size: int) -> np.ndarray:
+    def _predict_in_batches(self, model: nn.Module, all_pts_tensor, batch_size: int, cancel_callback=None) -> np.ndarray:
         """Батчинг предсказания с ускорением AMP и защитой от переполнения VRAM."""
         model.eval()
         chunks = []
@@ -179,9 +150,11 @@ class NativeDeformationService:
 
         with torch.no_grad():
             for start in range(0, n_points, batch_size):
+                if cancel_callback and cancel_callback(): return None
                 end = min(start + batch_size, n_points)
+                batch = torch.as_tensor(all_pts_tensor[start:end], dtype=torch.float32, device=self.device)
                 with torch.amp.autocast("cuda", enabled=use_cuda):
-                    batch_pred = model(all_pts_tensor[start:end])
+                    batch_pred = model(batch)
                 chunks.append(batch_pred.to(dtype=torch.float32).cpu())
 
         return torch.cat(chunks, dim=0).numpy()
@@ -220,17 +193,30 @@ class NativeDeformationService:
                               predict_batch_size: int = 100_000,
                               early_stop_patience: int = 60,
                               early_stop_min_delta: float = 1e-6,
-                              early_stop_rel_threshold: float = 0.01,
                               weight_decay: Optional[float] = None,
                               smoothness_weight: Optional[float] = None,
                               smoothness_epsilon: float = 0.01,
-                              positional_encoding_freqs: Optional[int] = None) -> Optional[pv.PolyData]:
+                              positional_encoding_freqs: Optional[int] = None,
+                              sample_count: int = 20000,
+                              min_coverage: float = 0.3,
+                              seed: int = 42,
+                              epochs: int = 600,
+                              target_rmse: float = 0.005) -> Optional[pv.PolyData]:
         """
         Главный пайплайн предеформации и компенсации:
         - Поддержка безопасной отмены (cancel_callback)
         - Анизотропный фактор деформации (factor: float или [Fx, Fy, Fz])
         - Автоматическая валидация и исправление топологии сетки (repair_mesh)
         """
+        if max_dev <= 0 or not np.isfinite(max_dev) or not 0 < min_coverage <= 1:
+            raise ValueError("Предел отклонений должен быть положительным, покрытие — от 0 до 100%.")
+        if sample_count < 0 or epochs < 1 or train_batch_size < 1 or predict_batch_size < 1:
+            raise ValueError("Некорректные параметры дискретизации или обучения.")
+        factors = np.asarray(factor, dtype=float)
+        if factors.size not in (1, 3) or not np.isfinite(factors).all():
+            raise ValueError("Коэффициент должен быть числом или тройкой конечных чисел.")
+        torch.manual_seed(seed)
+        self.last_quality = {}
         if log_callback:
             if self.device.type == "cuda":
                 gpu_name = torch.cuda.get_device_name(0)
@@ -249,7 +235,8 @@ class NativeDeformationService:
         if progress_callback:
             progress_callback(10)
 
-        train_pts, dev_vectors = self._compute_deviations_o3d(source_mesh, target_mesh, max_dev, log_callback)
+        sampling_mesh = sample_surface(source_mesh, sample_count, seed)
+        train_pts, dev_vectors = self._compute_deviations_o3d(sampling_mesh, target_mesh, max_dev, log_callback, cancel_callback)
 
         if cancel_callback and cancel_callback():
             if log_callback: log_callback("[!] Расчет отменен пользователем.")
@@ -258,7 +245,7 @@ class NativeDeformationService:
         if len(train_pts) < 10:
             raise ValueError("Слишком мало точек пересечения. Проверьте первичное совмещение моделей.")
 
-        total_cad_points = len(source_mesh.points)
+        total_cad_points = len(sampling_mesh.points)
         coverage_pct = 100.0 * len(train_pts) / max(total_cad_points, 1)
         if log_callback:
             log_callback(f"Найдено {len(train_pts)} точек с подтвержденным отклонением "
@@ -266,6 +253,9 @@ class NativeDeformationService:
         if progress_callback:
             progress_callback(25)
 
+        if coverage_pct / 100.0 < min_coverage:
+            raise ValueError(f"Недостаточное покрытие: {coverage_pct:.1f}%, требуется {min_coverage:.1%}. Проверьте совмещение и предел поиска.")
+        self.last_quality = {"coverage_percent": coverage_pct, "sample_count": total_cad_points, "confirmed_count": len(train_pts), "seed": seed}
         pts_mean = np.mean(train_pts, axis=0)
         pts_scale = np.max(np.abs(train_pts - pts_mean)) + 1e-5
 
@@ -293,8 +283,13 @@ class NativeDeformationService:
             model = MediumNetwork(**network_kwargs).to(self.device)
             if log_callback: log_callback("Выбрана 'Нормальная' нейросеть (Баланс)")
 
-        X = torch.tensor(X_norm, dtype=torch.float32, device=self.device)
-        Y = torch.tensor(Y_norm, dtype=torch.float32, device=self.device)
+        order = np.random.default_rng(seed).permutation(len(X_norm))
+        split = max(1, int(len(order) * 0.1))
+        val_indices, train_indices = order[:split], order[split:]
+        X_val = torch.tensor(X_norm[val_indices], dtype=torch.float32, device=self.device)
+        Y_val = torch.tensor(Y_norm[val_indices], dtype=torch.float32, device=self.device)
+        X = torch.tensor(X_norm[train_indices], dtype=torch.float32, device=self.device)
+        Y = torch.tensor(Y_norm[train_indices], dtype=torch.float32, device=self.device)
         n_samples = X.shape[0]
 
         batch_size = max(1, min(train_batch_size, n_samples))
@@ -307,8 +302,7 @@ class NativeDeformationService:
 
         best_loss = float("inf")
         epochs_without_improvement = 0
-        initial_loss = None
-        epochs = 600
+        best_state = None
 
         if log_callback:
             log_callback(f"Обучение нейросети (AMP: {'Вкл' if use_cuda else 'Выкл'}, Батч: {batch_size})...")
@@ -323,6 +317,7 @@ class NativeDeformationService:
             perm = torch.randperm(n_samples, device=self.device)
 
             for i in range(0, n_samples, batch_size):
+                if cancel_callback and cancel_callback(): return None
                 idx = perm[i:i + batch_size]
                 xb = X[idx]
                 yb = Y[idx]
@@ -335,6 +330,8 @@ class NativeDeformationService:
                     if smoothness_weight > 0:
                         loss = loss + smoothness_weight * self._smoothness_penalty(model, xb, pred, smoothness_epsilon)
 
+                if not torch.isfinite(loss):
+                    raise ValueError("Обучение потеряло численную устойчивость. Результат не создан.")
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -344,9 +341,6 @@ class NativeDeformationService:
             scheduler.step()
             epoch_loss = epoch_loss_sum / n_samples
 
-            if initial_loss is None:
-                initial_loss = epoch_loss
-
             if epoch % 25 == 0:
                 if progress_callback:
                     progress = 30 + int((epoch / epochs) * 55)
@@ -354,20 +348,26 @@ class NativeDeformationService:
                 if log_callback:
                     log_callback(f"   -> Эпоха {epoch}/{epochs}, Loss: {epoch_loss:.6f}")
 
-            if initial_loss > 0 and epoch_loss < initial_loss * early_stop_rel_threshold:
-                if log_callback:
-                    log_callback(f"   -> Достигнута сходимость: Loss снижен до 1% от начального (Эпоха {epoch}).")
-                break
-
-            if best_loss - epoch_loss > early_stop_min_delta:
-                best_loss = epoch_loss
+            model.eval()
+            with torch.no_grad():
+                validation_loss = criterion(model(X_val), Y_val).item()
+            model.train()
+            if not math.isfinite(validation_loss):
+                raise ValueError("Некорректная ошибка на контрольной выборке.")
+            if best_loss - validation_loss > early_stop_min_delta:
+                best_loss = validation_loss
+                best_state = deepcopy(model.state_dict())
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
-                if epochs_without_improvement >= early_stop_patience:
-                    if log_callback:
-                        log_callback(f"   -> Early Stopping: плато градиента {early_stop_patience} эпох подряд (Эпоха {epoch}).")
-                    break
+            if math.sqrt(validation_loss) / 10.0 <= target_rmse or epochs_without_improvement >= early_stop_patience:
+                break
+
+        if best_state is not None:
+            model.load_state_dict(best_state)
+        self.last_quality["validation_rmse_mm"] = math.sqrt(best_loss) / 10.0
+        if log_callback:
+            log_callback(f"Контрольная RMSE по компонентам: {self.last_quality['validation_rmse_mm']:.4f} мм")
 
         if cancel_callback and cancel_callback():
             if log_callback: log_callback("[!] Расчет отменен пользователем.")
@@ -379,9 +379,11 @@ class NativeDeformationService:
             progress_callback(90)
 
         all_pts_norm = (source_mesh.points - pts_mean) / pts_scale
-        all_pts_tensor = torch.tensor(all_pts_norm, dtype=torch.float32, device=self.device)
-
-        smooth_deviations = self._predict_in_batches(model, all_pts_tensor, predict_batch_size) / 10.0
+        smooth_deviations = self._predict_in_batches(model, all_pts_norm, predict_batch_size, cancel_callback)
+        if smooth_deviations is None: return None
+        smooth_deviations = smooth_deviations / 10.0
+        if not np.isfinite(smooth_deviations).all():
+            raise ValueError("Поле деформации содержит некорректные значения.")
 
         if cancel_callback and cancel_callback():
             if log_callback: log_callback("[!] Расчет отменен пользователем.")
@@ -402,16 +404,17 @@ class NativeDeformationService:
         result_mesh.points = final_points
 
         # Сохраняем векторное поле в саму сетку для последующей визуализации стрелками
-        result_mesh["Deformation_Vectors"] = smooth_deviations
+        result_mesh["Deformation_Vectors"] = final_points - source_mesh.points
+        result_mesh["Support_Distance"] = cKDTree(train_pts).query(source_mesh.points, workers=-1)[0]
+        self.last_quality["max_support_distance_mm"] = float(np.max(result_mesh["Support_Distance"]))
+        self.last_quality["max_displacement_mm"] = float(np.linalg.norm(final_points - source_mesh.points, axis=1).max())
 
-        # Валидация нормалей без разрушения топологии и индексов вершин
         if repair_mesh:
-            try:
-                result_mesh.compute_normals(cell_normals=False, point_normals=True, inplace=True,
-                                            auto_orient_normals=True)
-            except Exception as e:
-                if log_callback:
-                    log_callback(f"   -> Предупреждение при расчете нормалей: {e}")
+            if cancel_callback and cancel_callback(): return None
+            if log_callback: log_callback("Проверка вырожденных треугольников и самопересечений...")
+            validate_deformation(source_mesh, result_mesh)
+            if cancel_callback and cancel_callback(): return None
+            result_mesh.compute_normals(cell_normals=False, point_normals=True, inplace=True, split_vertices=False)
 
         if progress_callback:
             progress_callback(100)

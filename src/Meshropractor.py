@@ -7,10 +7,12 @@ import zipfile
 import json
 import io
 import os
+from uuid import uuid4
+from copy import deepcopy
 
 from PySide6.QtWidgets import QApplication, QMainWindow, QFileDialog, QColorDialog, QTreeWidgetItem, QToolButton, \
     QLabel, QSplashScreen, QTableWidgetItem, QMenu, QPushButton, QWidget, QHBoxLayout, QCheckBox
-from PySide6.QtCore import Qt, QSettings, QSize, QEvent
+from PySide6.QtCore import Qt, QSettings, QSize, QEvent, Slot
 from PySide6.QtGui import QColor, QFont, QTextCursor, QPixmap, QIcon, QCursor, QAction
 import pyvista as pv
 import ctypes
@@ -22,11 +24,8 @@ except Exception:
     pass
 
 from UI_Meshropractor import Ui_MainWindow
-from Workers_Meshropractor import AlignmentThread, CompensationThread, HAS_O3D
+from Workers_Meshropractor import AlignmentThread, CompensationThread
 from ml_deformation import NativeDeformationService
-
-if HAS_O3D:
-    import open3d as o3d
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = getattr(sys, '_MEIPASS', os.path.dirname(BASE_DIR))
@@ -57,15 +56,16 @@ def apply_dark_titlebar(widget):
         pass
 
 # Автоматически красим шапку любого диалога при его открытии
-_orig_dialog_showEvent = QDialog.showEvent
-def _dark_dialog_showEvent(self, event):
-    apply_dark_titlebar(self)
-    return _orig_dialog_showEvent(self, event)
-QDialog.showEvent = _dark_dialog_showEvent
 # =================================================================
 
 
-class MainWindow(QMainWindow):
+from project_controller import ProjectController
+from background_tasks import FunctionWorker
+from geometry_analysis import compute_heatmap, sample_surface
+from project_store import validate_platforms
+
+
+class MainWindow(ProjectController):
     def __init__(self):
         super().__init__()
         # Принудительно делаем системную шапку/рамку окна черной даже на белой Windows
@@ -94,7 +94,11 @@ class MainWindow(QMainWindow):
         self.plat_actors = []  # Список актеров 3D-платформы
         plat_str = self.settings.value("platforms_json", None)
         if plat_str:
-            self.platforms = json.loads(plat_str)
+            try:
+                self.platforms = json.loads(plat_str)
+                validate_platforms(self.platforms)
+            except (ValueError, TypeError, KeyError):
+                self.platforms = [{"name": "Concept Laser M2", "dim": [220, 220, 280], "is_default": True}]
         else:
             # Стартовый набор по умолчанию, если программа запущена впервые
             self.platforms = [
@@ -102,6 +106,8 @@ class MainWindow(QMainWindow):
                 {"name": "Concept Laser Mlab", "dim": [90, 90, 80], "is_default": False}
             ]
 
+        for platform in self.platforms:
+            platform.setdefault("id", str(uuid4()))
         # Подключаем сигналы переключения сцен
         self.ui.stack.currentChanged.connect(lambda idx: self.refresh_scene_visibility() if self.ui.stack.widget(idx) is self.ui.page_slicer else None)
         self.ui.scene_tabs.currentChanged.connect(self.on_scene_tab_changed)
@@ -166,7 +172,7 @@ class MainWindow(QMainWindow):
         self.ui.ribbon_btns["Новый проект"].clicked.connect(self.action_new_project)
         self.ui.ribbon_btns["Загрузить проект"].clicked.connect(self.action_open_project)
         self.ui.ribbon_btns["Сохранить проект"].clicked.connect(self.save_project)
-        self.ui.ribbon_btns["Сохранить проект как"].clicked.connect(self.save_project)
+        self.ui.ribbon_btns["Сохранить проект как"].clicked.connect(lambda: self.save_project(save_as=True))
         self.ui.ribbon_btns["Импорт детали"].clicked.connect(self.import_slicer_part)
         self.ui.ribbon_btns["Выгрузить деталь"].clicked.connect(self.unload_slicer_part)
 
@@ -199,6 +205,24 @@ class MainWindow(QMainWindow):
         self.ui.sliders["heat_limit"][0].valueChanged.connect(self.update_heatmap_limit)
 
         # Глобальный перехватчик движений мыши для изменения размера окна
+        self.init_project_controller()
+        available_commands = {"Новый проект", "Загрузить проект", "Сохранить проект", "Сохранить проект как",
+                              "Импорт детали", "Выгрузить деталь", "Сохранить выбранные детали как", "Управление платформами"}
+        from slicer_tools import TOOL_NAMES
+        available_commands.update(TOOL_NAMES)
+        for name, button in self.ui.ribbon_btns.items():
+            if name not in available_commands:
+                button.setEnabled(False)
+                button.setToolTip("В разработке")
+        for name in ("Создание срезов Concept Laser", "Сохранить все в папку"):
+            self.ui.ribbon_btns[name].setEnabled(False)
+            self.ui.ribbon_btns[name].setToolTip("В разработке")
+        self.init_history()
+        self.init_slicer_tools()
+        from slicer_workspace import SlicerWorkspace
+        self.workspace_tools = SlicerWorkspace(self)
+        from window_snap import enable_snap
+        enable_snap(self)
         QApplication.instance().installEventFilter(self)
 
     def _apply_dark_titlebar(self, widget):
@@ -239,9 +263,15 @@ class MainWindow(QMainWindow):
             self.unsetCursor()
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.Show and isinstance(obj, QDialog):
+            apply_dark_titlebar(obj)
         # ЗАЩИТА ОТ КРАША: не ловим мышь, пока окно не загрузилось полностью
         if not self.isVisible():
             return super().eventFilter(obj, event)
+
+        from window_snap import title_event
+        if title_event(self, obj, event):
+            return True
 
         if event.type() == QEvent.MouseMove and not getattr(self, '_resizing', False):
             if event.buttons() == Qt.NoButton:
@@ -257,10 +287,19 @@ class MainWindow(QMainWindow):
         if event.button() == Qt.LeftButton:
             self._resize_dir = self._check_resize_zone(event.position().toPoint())
             if self._resize_dir:
+                edges = Qt.Edges()
+                for code, edge in (("T", Qt.TopEdge), ("B", Qt.BottomEdge), ("L", Qt.LeftEdge), ("R", Qt.RightEdge)):
+                    if code in self._resize_dir: edges |= edge
+                if self.windowHandle() and self.windowHandle().startSystemResize(edges):
+                    event.accept()
+                    return
                 self._resizing = True
                 self._start_geometry = self.geometry()
                 self._start_mouse_pos = event.globalPosition().toPoint()
             elif event.position().y() < 45:
+                if self.windowHandle() and self.windowHandle().startSystemMove():
+                    event.accept()
+                    return
                 self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
@@ -302,34 +341,20 @@ class MainWindow(QMainWindow):
         self.setCursor(Qt.ArrowCursor)
         super().leaveEvent(event)
 
-    def closeEvent(self, event):
-        # Безопасная остановка всех трех рабочих потоков
-        for thread_attr in ('comp_thread', 'def_thread', 'align_thread'):
-            if hasattr(self, thread_attr):
-                th = getattr(self, thread_attr)
-                if th.isRunning():
-                    self.log(f"Остановка фонового потока ({thread_attr})...")
-                    th.requestInterruption()
-                    th.wait(1500)
-                    if th.isRunning():
-                        th.terminate()
-                        th.wait()
 
-        try:
-            if hasattr(self, 'ui') and getattr(self.ui, 'plotter', None):
-                self.ui.plotter.close()
-            if hasattr(self, 'ui') and getattr(self.ui, 'slicer_plotter', None):
-                self.ui.slicer_plotter.close()
-        except Exception:
-            pass
-
-        event.accept()
-
+    @Slot(str)
     def log(self, text, replace=False):
         clean_text = text.replace("REPLACE_FLAG", "")
-        print(clean_text)
+        if hasattr(self.ui, "log_view"):
+            self.ui.log_view.append(clean_text)
+            if "[!]" in clean_text:
+                self.ui.log_dock.show()
+        if sys.stdout is not None:
+            encoding = sys.stdout.encoding or "utf-8"
+            print(clean_text.encode(encoding, errors="replace").decode(encoding), flush=True)
 
     def pick_color(self, key, btn):
+        self.mark_dirty()
         initial_color = QColor(self.ui.mesh_colors[key])
         color = QColorDialog.getColor(initial_color, self, f"Выберите цвет для {key}")
         if color.isValid() and self.ui.plotter:
@@ -344,10 +369,11 @@ class MainWindow(QMainWindow):
         faces = np.pad(tmesh.faces, ((0, 0), (1, 0)), constant_values=3)
         return pv.PolyData(tmesh.vertices, faces)
 
-    def add_def_table_item(self, table, filename, base_actor_key, clear_table=False):
+    def add_def_table_item(self, table, filename, base_actor_key, clear_table=False, actor_key=None):
         if clear_table:
             for i in range(table.rowCount()):
-                old_key = f"{base_actor_key}_{i}"
+                old_key = table.item(i, 0).data(Qt.UserRole)
+                self.scene_models.pop(old_key, None)
                 if self.actors.get(old_key) and getattr(self.ui, 'plotter', None):
                     self.ui.plotter.remove_actor(self.actors[old_key])
                 bbox_key = f"{old_key}__bbox"
@@ -357,7 +383,7 @@ class MainWindow(QMainWindow):
 
         row = table.rowCount()
         table.insertRow(row)
-        actor_key = f"{base_actor_key}_{row}"
+        actor_key = actor_key or f"{base_actor_key}_{row}"
 
         if actor_key not in self.actors:
             self.actors[actor_key] = None
@@ -381,6 +407,7 @@ class MainWindow(QMainWindow):
         chk_sel = QCheckBox()
         chk_sel.setFixedSize(20, 20)
         chk_sel.setChecked(True)
+        chk_sel.toggled.connect(self.mark_dirty)
         sel_layout.addWidget(chk_sel)
         table.setCellWidget(row, 1, sel_container)
 
@@ -447,6 +474,9 @@ class MainWindow(QMainWindow):
             pv_mesh, color=self.ui.mesh_colors.get(key, "#d3d3d3"), opacity=1.0
         )
         self.actors[key] = actor
+        kind = key.split("_", 1)[0]
+        self.scene_models[key] = dict(key=key, kind=kind, name=key, mesh=mesh)
+        self.mark_dirty()
         actor.pickable = True
 
         # Сразу включаем базовый режим "Треугольники" (плоское освещение + черная сетка ребер)
@@ -471,11 +501,8 @@ class MainWindow(QMainWindow):
             last_mode = meta.get("last_visible_mode", "shaded")
             self._apply_def_display_mode(table, row, actor_key, last_mode, sync_visible_checkbox=False)
 
-        # Скрываем шкалу значений вместе с моделью карты отклонений
-        if actor_key.startswith("Heatmap") and hasattr(self.ui.plotter, 'scalar_bars'):
-            for sb in self.ui.plotter.scalar_bars.values():
-                sb.SetVisibility(is_visible)
-            self.ui.plotter.render()
+        self._sync_heatmap_legend()
+        self.mark_dirty()
 
     def on_def_table_cell_clicked(self, table, row, column):
         """Открывает меню режимов затенения или прозрачности при клике по ячейке"""
@@ -539,6 +566,7 @@ class MainWindow(QMainWindow):
 
     def _apply_def_display_mode(self, table, row, actor_key, mode_key, sync_visible_checkbox=True):
         """Применяет выбранный режим затенения к актеру 3D-сцены деформации"""
+        self.mark_dirty()
         plotter = getattr(self.ui, 'plotter', None)
         if not plotter: return
         actor = self.actors.get(actor_key)
@@ -584,10 +612,12 @@ class MainWindow(QMainWindow):
             if bbox_actor is not None:
                 bbox_actor.SetVisibility(True)
         elif mode_key == "transparent":
-            prop.SetOpacity(0.35)
-            meta["transparency"] = 65
+            if not current_trans:
+                current_trans = 65
+            prop.SetOpacity(1.0 - current_trans / 100.0)
+            meta["transparency"] = current_trans
             cell_tr = table.item(row, 4)
-            if cell_tr: cell_tr.setText("65%")
+            if cell_tr: cell_tr.setText(f"{current_trans}%")
         elif mode_key == "flat":
             prop.SetLighting(False)
 
@@ -614,9 +644,11 @@ class MainWindow(QMainWindow):
 
         plotter.reset_camera_clipping_range()
         plotter.render()
+        self._sync_heatmap_legend()
 
     def _apply_def_transparency(self, table, row, actor_key, trans_pct):
         """Применяет процент прозрачности к актеру 3D-сцены деформации"""
+        self.mark_dirty()
         plotter = getattr(self.ui, 'plotter', None)
         if not plotter: return
         actor = self.actors.get(actor_key)
@@ -669,168 +701,64 @@ class MainWindow(QMainWindow):
             self.ui.plotter.render()
 
     def undo_action(self):
-        self.log("> Возврат к предыдущему состоянию")
+        self.travel_history(-1)
 
     def redo_action(self):
-        self.log("> Повтор отмененного действия")
+        self.travel_history(1)
 
-    def load_cad(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Загрузить CAD", "", "STL Files (*.stl)")
-        if path:
-            filename = path.split('/')[-1]
-            self.log(f"> Загружен CAD: {filename}")
-            self.cad_mesh = trimesh.load(path)
-            # ФИКС: Сохраняем и отрисовываем строго под сгенерированным ключом (CAD_0)
-            actor_key = self.add_def_table_item(self.ui.tbl_cad, filename, "CAD", clear_table=True)
-            self.show_mesh(actor_key, self.cad_mesh)
 
-    def load_scan(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Загрузить Скан", "", "STL Files (*.stl)")
-        if path:
-            filename = path.split('/')[-1]
-            self.log(f"> Загружен Скан: {filename}")
-            self.scan_mesh = trimesh.load(path)
-            # ФИКС: Получаем правильный ключ (Scan_0)
-            actor_key = self.add_def_table_item(self.ui.tbl_scan, filename, "Scan", clear_table=True)
-            self.show_mesh(actor_key, self.scan_mesh)
 
     # === ФУНКЦИИ СЛАЙСЕРА ===
-    def import_slicer_part(self):
-        """Загружает STL деталь в 3D-сцену слайсера"""
-        path, _ = QFileDialog.getOpenFileName(self, "Импорт детали для печати", "", "STL Files (*.stl)")
-        if path:
-            filename = os.path.basename(path)
-            self.log(f"\n>>> Загрузка детали в слайсер: {filename}...")
-            try:
-                mesh = trimesh.load(path)
-                pv_mesh = self.trimesh_to_pyvista(mesh)
-
-                # Убеждаемся, что сцена создана
-                self.ui._ensure_slicer_plotter()
-
-                # Уникальное имя для движка, чтобы он не перезаписывал старую модель
-                part_id = len(self.slicer_parts)
-                actor_name = f"slicer_part_{part_id}"
-
-                if self.ui.slicer_plotter:
-                    self.ui.slicer_plotter.add_mesh(pv_mesh, color="#d3d3d3", show_edges=True, name=actor_name)
-                    if part_id == 0:  # Центрируем камеру только для первой детали
-                        self.ui.slicer_plotter.reset_camera()
-                    self.ui.slicer_plotter.render()
-
-                # Узнаем, на какой вкладке мы сейчас находимся
-                current_tab_idx = self.ui.scene_tabs.currentIndex()
-                active_platforms = [p for p in self.platforms if p["is_default"]]
-
-                assigned_plat = None
-                # Если мы НЕ на модельной сцене, привязываем деталь к текущей машине
-                if current_tab_idx > 0 and len(active_platforms) >= current_tab_idx:
-                    assigned_plat = active_platforms[current_tab_idx - 1]["name"]
-
-                # Сохраняем в список
-                self.slicer_parts.append({
-                    "mesh": mesh,
-                    "mesh_pv": pv_mesh,
-                    "filename": filename,
-                    "actor_name": actor_name,
-                    "last_visible_mode": "shaded_wire",
-                    "platform": assigned_plat  # <--- НОВЫЙ ПАРАМЕТР ПРИВЯЗКИ
-                })
-
-                # --- ДОБАВЛЯЕМ ДЕТАЛЬ В ТАБЛИЦУ ---
-                row = self.ui.tbl_parts.rowCount()
-                self.ui.tbl_parts.insertRow(row)
-
-                # --- Столбец 0: Номер по порядку (#) ---
-                item_id = QTableWidgetItem(str(row + 1))
-                item_id.setTextAlignment(Qt.AlignCenter)
-                # Оставляем ячейку активной для клика, но ЗАПРЕЩАЕМ двойной клик и ввод текста:
-                item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
-                self.ui.tbl_parts.setItem(row, 0, item_id)
-
-                # --- Столбец 1: Выбранные (Чекбокс по центру) ---
-                sel_container = QWidget()
-                sel_layout = QHBoxLayout(sel_container)
-                sel_layout.setContentsMargins(0, 0, 0, 0)
-                sel_layout.setAlignment(Qt.AlignCenter)
-                chk_sel = QCheckBox()
-                chk_sel.setFixedSize(20, 20)  # <--- Обрубаем невидимый текст, делая ровный квадрат
-                chk_sel.setChecked(True)
-                chk_sel.setCursor(Qt.PointingHandCursor)
-                sel_layout.addWidget(chk_sel)
-                self.ui.tbl_parts.setCellWidget(row, 1, sel_container)
-
-                # --- Столбец 2: Видимые (Чекбокс по центру) ---
-                vis_container = QWidget()
-                vis_layout = QHBoxLayout(vis_container)
-                vis_layout.setContentsMargins(0, 0, 0, 0)
-                vis_layout.setAlignment(Qt.AlignCenter)
-                chk_vis = QCheckBox()
-                chk_vis.setFixedSize(20, 20)  # <--- То же самое здесь
-                chk_vis.setChecked(True)
-                chk_vis.setCursor(Qt.PointingHandCursor)
-                chk_vis.toggled.connect(lambda checked, r=row: self._on_vis_checkbox_changed(r, checked))
-                vis_layout.addWidget(chk_vis)
-                self.ui.tbl_parts.setCellWidget(row, 2, vis_container)
-
-                self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem("Зат.+каркас"))  # соответствует show_edges=True при add_mesh выше
-                self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem("0%"))
-                # --- Создаем кнопку цвета (столбец 5) ---
-                color_container = QWidget()
-                color_layout = QHBoxLayout(color_container)
-                color_layout.setContentsMargins(0, 0, 0, 0)
-                color_layout.setAlignment(Qt.AlignCenter)
-
-                btn_color = QPushButton()
-                btn_color.setFixedSize(24, 24)
-                btn_color.setCursor(Qt.PointingHandCursor)
-                # Стартовый цвет берем из настроек сцены слайсера (#d3d3d3)
-                btn_color.setStyleSheet("background-color: #d3d3d3; border: 1px solid #555; border-radius: 3px;")
-
-                # Привязываем клик к новой функции, передавая ей номер строки и саму кнопку
-                btn_color.clicked.connect(lambda checked=False, r=row, b=btn_color: self.pick_slicer_part_color(r, b))
-
-                color_layout.addWidget(btn_color)
-                # Используем setCellWidget вместо setItem!
-                self.ui.tbl_parts.setCellWidget(row, 5, color_container)
-                # Убрали "STL", а название сдвинули на индекс 6
-                self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem(filename))
-
-                self.ui.lbl_part_count.setText(f"Кол-во деталей: {self.ui.tbl_parts.rowCount()}")
-                self.log("✅ Деталь успешно импортирована в сцену слайсера.")
-                self.update_info_combobox()
-                self.refresh_scene_visibility()  # <--- ВМЕСТО render()
-                self.update_parts_table_filter(current_tab_idx)
-            except Exception as e:
-                self.log(f"[!] Ошибка при импорте детали: {str(e)}")
 
     def unload_slicer_part(self):
-        """Очищает сцену слайсера и удаляет все детали"""
-        self.slicer_parts = []
-        if getattr(self.ui, 'slicer_plotter', None):
-            self.ui.slicer_plotter.clear()
-            self.ui.slicer_plotter.add_axes()
-            self.ui.slicer_plotter.render()
-
-        self.ui.tbl_parts.setRowCount(0)
-        self.ui.lbl_part_count.setText("Кол-во деталей: 0")
-        self.log("\n[i] Детали выгружены, сцена слайсера очищена.")
-        self.update_info_combobox()
+        """Удаляет только отмеченные детали текущей сцены, одним шагом истории."""
+        if self._busy(): return
+        rows = set(self.selected_slicer_rows())
+        if not rows:
+            self.log("Выберите детали для выгрузки в таблице или в рабочей области.")
+            return
+        self.flush_history()
+        before = self.capture_project()
+        remaining = [(part, self._style_for(self.ui.tbl_parts, row))
+                     for row, part in enumerate(self.slicer_parts) if row not in rows]
+        self.workspace_tools.clear()
+        try:
+            for part in self.slicer_parts:
+                for suffix in ('', '__bbox'):
+                    self.ui.slicer_plotter.remove_actor(part['actor_name'] + suffix)
+            self.slicer_parts = []
+            self.ui.tbl_parts.setRowCount(0)
+            self._slicer_batch = True
+            for part, style in remaining:
+                self._append_slicer_part(part['mesh'], part['filename'], part.get('platform'), style, part.get('supports', []))
+            self.update_info_combobox()
+            self.refresh_scene_visibility()
+            self.update_parts_table_filter(self.ui.scene_tabs.currentIndex())
+            self.mark_dirty()
+            self.flush_history("Выгрузить выбранные детали")
+            self.log(f"Выгружено деталей: {len(rows)}. Осталось: {len(remaining)}.")
+        except Exception:
+            self.restore_project(before)
+            raise
+        finally:
+            self._slicer_batch = False
 
     def save_selected_slicer_parts(self):
         """Сохраняет выбранные галочкой детали из слайсера в STL"""
+        if self._busy(): return
         if self.ui.tbl_parts.rowCount() == 0 or not self.slicer_parts:
             self.log("[!] ОШИБКА: Нет загруженных деталей для сохранения.")
             return
 
         meshes_to_save = []
         # Собираем меши всех деталей, у которых стоит галочка в колонке 1
-        for row in range(self.ui.tbl_parts.rowCount()):
+        for row in self.selected_slicer_rows():
             container = self.ui.tbl_parts.cellWidget(row, 1)
             if container:
                 chk = container.findChild(QCheckBox)
                 if chk and chk.isChecked():
-                    meshes_to_save.append(self.slicer_parts[row]["mesh"])
+                    from part_supports import combined_mesh
+                    meshes_to_save.append(combined_mesh(self.slicer_parts[row]))
 
         if not meshes_to_save:
             self.log("[!] ВНИМАНИЕ: Нет выбранных деталей. Отметьте деталь галочкой в таблице.")
@@ -853,6 +781,7 @@ class MainWindow(QMainWindow):
                 self.log(f"[!] Ошибка при сохранении: {str(e)}")
 
     def _on_vis_checkbox_changed(self, row, is_visible):
+        self.mark_dirty()
         if row >= len(self.slicer_parts): return
 
         # ВОССТАНАВЛИВАЕМ ЛОГИКУ ТЕКСТА ПРИ ОТКЛЮЧЕНИИ ГАЛОЧКИ
@@ -984,6 +913,8 @@ class MainWindow(QMainWindow):
             (on_slicer_part_item_changed) передают False, чтобы не дергать ее
             повторно и не плодить лишние сигналы - она там уже в нужном состоянии.
         """
+        if sync_visible_checkbox:
+            self.mark_dirty()
         if row >= len(self.slicer_parts):
             return
         plotter = getattr(self.ui, 'slicer_plotter', None)
@@ -1066,8 +997,7 @@ class MainWindow(QMainWindow):
                 bbox_actor.SetVisibility(True)
 
         elif mode_key == "transparent":
-            # --- Прозрачность: полупрозрачная поверхность, чтобы видеть, что за деталью ---
-            prop.SetOpacity(0.35)
+            prop.SetOpacity(1.0 - float(self.ui.tbl_parts.item(row, 4).text().rstrip("%")) / 100.0)
 
         elif mode_key == "flat":
             # --- Без затенения: ровная заливка цветом без учета освещения сцены
@@ -1102,12 +1032,14 @@ class MainWindow(QMainWindow):
                         chk.blockSignals(False)
 
             # --- ИСПРАВЛЕНИЕ БАГА: Принудительно пересчитываем глубину видимости камеры ---
-            plotter.reset_camera_clipping_range()
-
-            plotter.render()
+            if sync_visible_checkbox:
+                plotter.reset_camera_clipping_range()
+                self.ui.section_panel.refresh()
+                plotter.render()
 
     def _apply_part_transparency(self, row, trans_pct):
         """Меняет уровень прозрачности актера в PyVista и обновляет текст в таблице"""
+        self.mark_dirty()
         if row >= len(self.slicer_parts):
             return
 
@@ -1148,6 +1080,7 @@ class MainWindow(QMainWindow):
 
     def pick_slicer_part_color(self, row, btn):
         """Вызывает окно выбора цвета и перекрашивает 3D-деталь в слайсере"""
+        self.mark_dirty()
         if row >= len(self.slicer_parts):
             return
 
@@ -1194,6 +1127,7 @@ class MainWindow(QMainWindow):
         if column == 6 and 0 <= row < len(self.slicer_parts):
             item = self.ui.tbl_parts.item(row, column)
             if item:
+                self.mark_dirty()
                 self.slicer_parts[row]["filename"] = item.text()
                 self.update_info_combobox()
 
@@ -1289,6 +1223,7 @@ class MainWindow(QMainWindow):
         self.log("\n[РЕЖИМ СКАНА] Наведите курсор на деталь и нажмите ПРОБЕЛ.")
 
     def on_space_pressed(self):
+        if self._busy(): return
         if not self.pick_mode or not self.ui.plotter: return
         try:
             import vtk
@@ -1302,6 +1237,7 @@ class MainWindow(QMainWindow):
             self.log(f"[!] Ошибка лучемета: {str(e)}")
 
     def place_marker(self, point):
+        self.mark_dirty()
         if not self.ui.plotter: return
         radius = self.cad_mesh.scale * 0.015 if self.cad_mesh else 1.0
         if self.pick_mode == 'CAD':
@@ -1319,6 +1255,7 @@ class MainWindow(QMainWindow):
         self.ui.lbl_pts.setText(f"Точек на CAD: {len(self.cad_pts)} | Точек на Скане: {len(self.scan_pts)}")
 
     def clear_picks(self):
+        self.mark_dirty()
         self.cad_pts.clear()
         self.scan_pts.clear()
         self.pick_mode = None
@@ -1328,25 +1265,25 @@ class MainWindow(QMainWindow):
         self.ui.lbl_pts.setText("Точек на CAD: 0 | Точек на Скане: 0")
 
     def run_icp(self):
-        if not self.cad_mesh or not self.scan_mesh:
+        if self._busy(): return
+        if self.cad_mesh is None or self.scan_mesh is None:
             return self.log("[!] ОШИБКА: Загрузите обе модели!")
-        if len(self.cad_pts) > 0 and len(self.cad_pts) != len(self.scan_pts):
+        if (self.cad_pts or self.scan_pts) and (len(self.cad_pts) < 3 or len(self.cad_pts) != len(self.scan_pts)):
             return self.log("[!] ОШИБКА: Количество маркеров не совпадает!")
 
         self.pick_mode = None
-        self.ui.btn_run_icp.setEnabled(False)
         self.ui.btn_run_icp.setText("⏳ ИДЕТ ВЫРАВНИВАНИЕ...")
         self.ui.lbl_rmse.setText("Расчет...")
 
         settings = {
             "search_time": self.ui.cb_search_time.currentIndex(),
-            "do_icp": self.ui.chk_icp.isChecked()
+            "do_icp": self.ui.chk_icp.isChecked(),
+            "tolerance": self.ui.sb_align_tolerance.value(),
+            "min_fitness": self.ui.sb_align_coverage.value() / 100
         }
 
         self.align_thread = AlignmentThread(self.cad_mesh, self.scan_mesh, self.cad_pts, self.scan_pts, settings)
-        self.align_thread.log_signal.connect(self.log)
-        self.align_thread.finished_signal.connect(self.on_icp_done)
-        self.align_thread.start()
+        self.start_job(self.align_thread, self.on_icp_done)
 
     def on_icp_done(self, result_tuple):
         aligned_scan, rmse = result_tuple
@@ -1361,55 +1298,26 @@ class MainWindow(QMainWindow):
         self.ui.btn_run_icp.setEnabled(True)
         self.ui.btn_run_icp.setText("▶ ВЫПОЛНИТЬ ВЫРАВНИВАНИЕ")
         self.ui.lbl_rmse.setText(f"{rmse:.4f} mm")
+        self.update_alignment_quality()
 
         self.clear_picks()
         self.log("\n>>> Модели успешно выровнены.")
 
     def generate_heatmap(self):
-        if not self.cad_mesh or not self.scan_mesh: return self.log("[!] ОШИБКА: Загрузите модели.")
-        if not getattr(self.ui, 'plotter', None): return
-
-        self.log("\n>>> Расчет цветовой карты...")
-        self.ui.btn_heatmap.setEnabled(False)
-        try:
-            if not HAS_O3D: return self.log("[!] Для Heatmap требуется Open3D.")
-            cad_tmesh = o3d.t.geometry.TriangleMesh(o3d.core.Tensor(np.array(self.cad_mesh.vertices, dtype=np.float32)),
-                                                    o3d.core.Tensor(np.array(self.cad_mesh.faces, dtype=np.int32)))
-            scene = o3d.t.geometry.RaycastingScene()
-            scene.add_triangles(cad_tmesh)
-            query_points = o3d.core.Tensor(np.array(self.scan_mesh.vertices, dtype=np.float32))
-            signed_dists = scene.compute_signed_distance(query_points).numpy()
-            pv_heatmap = self.trimesh_to_pyvista(self.scan_mesh)
-            pv_heatmap['Deviation'] = signed_dists
-            self.pv_heatmap = pv_heatmap
-
-            # Создаем запись в новой таблице "Карты отклонений"
+        if self._busy(): return
+        if self.cad_mesh is None or self.scan_mesh is None:
+            return self.log("[!] Загрузите CAD и скан.")
+        scan = self.scan_mesh.copy()
+        def ready(deviations):
             self.heat_count += 1
-            actor_key = self.add_def_table_item(self.ui.tbl_heat, f"Карта {self.heat_count}.stl", "Heatmap", clear_table=False)
-
-            # Гасим CAD и Скан, чтобы не перекрывали тепловую карту
+            key = self.add_def_table_item(self.ui.tbl_heat, f"Карта {self.heat_count}", "Heatmap")
+            self._render_heatmap(key, scan, deviations)
+            self.scene_models[key]["name"] = f"Карта {self.heat_count}"
+            self._activate_heatmap(key)
             self._set_table_visibility(self.ui.tbl_cad, False)
             self._set_table_visibility(self.ui.tbl_scan, False)
-
-            limit = self.ui.sliders["heat_limit"][0].value() / self.ui.sliders["heat_limit"][1]
-            heat_actor = self.ui.plotter.add_mesh(
-                pv_heatmap, scalars='Deviation', cmap='turbo', clim=[-limit, limit],
-                show_scalar_bar=True, scalar_bar_args={
-                    'title': 'Отклонение (мм)', 'color': 'black', 'vertical': True,
-                    'position_x': 0.88, 'position_y': 0.05, 'height': 0.9, 'width': 0.08,
-                    'title_font_size': 18, 'label_font_size': 14, 'fmt': '%1.3f'
-                },
-                name=actor_key
-            )
-            self.actors[actor_key] = heat_actor
-            self.actors["Heatmap"] = heat_actor
-
-            self.ui.plotter.reset_camera()
-            self.log(f"✅ Готово! Модель 'Карта {self.heat_count}' добавлена в список.")
-        except Exception as e:
-            self.log(f"[!] Ошибка: {str(e)}")
-        finally:
-            self.ui.btn_heatmap.setEnabled(True)
+            self.mark_dirty()
+        self.start_job(FunctionWorker(compute_heatmap, self.cad_mesh.copy(), scan), ready)
 
     def update_heatmap_limit(self):
         if not getattr(self.ui, 'plotter', None): return
@@ -1425,6 +1333,7 @@ class MainWindow(QMainWindow):
             if key.startswith("Heatmap") and self.actors.get(key) and self.ui.plotter:
                 self.ui.plotter.remove_actor(self.actors[key])
                 self.actors[key] = None
+                self.scene_models.pop(key, None)
 
         if hasattr(self.ui.plotter, 'scalar_bars'):
             for sb in list(self.ui.plotter.scalar_bars.values()):
@@ -1432,7 +1341,9 @@ class MainWindow(QMainWindow):
             self.ui.plotter.scalar_bars.clear()
 
         self.ui.tbl_heat.setRowCount(0)
+        self.active_heatmap_key = None
         self.pv_heatmap = None
+        self.mark_dirty()
 
         self._set_table_visibility(self.ui.tbl_cad, True)
         self._set_table_visibility(self.ui.tbl_scan, True)
@@ -1454,12 +1365,11 @@ class MainWindow(QMainWindow):
 
         # ФИКС: Используем isChecked(), так как в PySide6 сравнение state == Qt.Checked дает сбой
         if self.ui.chk_preview_pts.isChecked():
-            n_points = self.ui.sb_points.value()
+            n_points = 0 if self.ui.cb_samples.currentIndex() == 1 else self.ui.sb_points.value()
             self.log(f"> Генерация {n_points} точек для предпросмотра...")
 
             # 1. Генерируем точки
-            pts, _ = trimesh.sample.sample_surface(self.cad_mesh, n_points)
-            pv_cloud = pv.PolyData(pts)
+            pv_cloud = sample_surface(self.trimesh_to_pyvista(self.cad_mesh), n_points, seed=42)
 
             # 2. Отрисовываем
             self.actors["PreviewCloud"] = self.ui.plotter.add_mesh(
@@ -1482,7 +1392,7 @@ class MainWindow(QMainWindow):
             # 2. Возвращаем оригинальную прозрачность
             for k, a in self.actors.items():
                 if k.startswith("CAD") and a:
-                    a.GetProperty().SetOpacity(0.8)
+                    a.GetProperty().SetOpacity(1.0 - self.def_actors_meta.get(k, {}).get("transparency", 0) / 100.0)
 
             self.ui.plotter.render()
 
@@ -1506,8 +1416,13 @@ class MainWindow(QMainWindow):
                 self.ui.chk_show_vectors.blockSignals(False)
                 return
 
-            vecs = self.result_mesh.metadata["vectors"]
-            cad_pv = self.trimesh_to_pyvista(self.cad_mesh)
+            vecs = np.asarray(self.result_mesh.metadata["vectors"])
+            origins = self.result_mesh.metadata.get("vector_origins", self.result_mesh.vertices)
+            cad_pv = pv.PolyData(np.asarray(origins))
+            if vecs.shape != (cad_pv.n_points, 3):
+                self.log("[!] Векторное поле не соответствует вершинам результата.")
+                self.ui.chk_show_vectors.setChecked(False)
+                return
 
             # Генерация векторных глифов (каждая 40-я точка для плавной работы сцены)
             arrows = NativeDeformationService.build_deformation_glyphs(
@@ -1525,36 +1440,19 @@ class MainWindow(QMainWindow):
                 self.ui.plotter.render()
 
     def run_def(self):
-        if not self.cad_mesh or not self.scan_mesh:
+        if self._busy(): return
+        if self.cad_mesh is None or self.scan_mesh is None:
             return self.log("[!] ОШИБКА: Загрузите и совместите модели!")
 
         self.ui.def_stack.setCurrentIndex(1)
         self.ui.def_progress_bar.setValue(0)
 
-        settings = {
-            "def_type": self.ui.cb_def_type.currentIndex(),
-            "points": self.ui.sb_points.value(),
-            "is_comp": False,  # <--- ВАЖНО: Выключаем инверсию, это симуляция усадки!
-            "factor": 1.0,
-            "limit": 5.0,
-            "norm": 80.0
-        }
+        settings = self.calculation_settings(False)
 
         self.def_thread = CompensationThread(self.cad_mesh, self.scan_mesh, settings)
-        self.def_thread.log_signal.connect(self.log)
-        self.def_thread.progress_signal.connect(lambda val: self.ui.def_progress_bar.setValue(val))
-        self.def_thread.finished_signal.connect(self.on_def_done)
-        self.def_thread.start()
+        self.def_thread.progress_signal.connect(self.ui.def_progress_bar.setValue)
+        self.start_job(self.def_thread, self.on_def_done)
 
-    def cancel_def(self):
-        if hasattr(self, 'def_thread') and self.def_thread.isRunning():
-            self.log("[!] Отмена расчета деформации...")
-            self.def_thread.requestInterruption()
-            self.def_thread.wait(2000)  # Ожидание мягкого выхода до 2 секунд
-            if self.def_thread.isRunning():
-                self.def_thread.terminate()
-                self.def_thread.wait()
-        self.ui.def_stack.setCurrentIndex(0)
 
     def on_def_done(self, result_mesh):
         self.def_count += 1
@@ -1570,60 +1468,28 @@ class MainWindow(QMainWindow):
         self.ui.btn_save.setEnabled(True)
         # Сохраняем последний результат в память для кнопки "Сохранить"
         self.result_mesh = result_mesh
+        self.active_result_key = actor_key
+        self.update_result_quality()
+        self.mark_dirty()
         # Если стрелки были включены, обновляем их под новую деформацию
         if self.ui.chk_show_vectors.isChecked():
             self.toggle_vector_field()
 
     def run_comp(self):
-        if not self.cad_mesh or not self.scan_mesh:
+        if self._busy(): return
+        if self.cad_mesh is None or self.scan_mesh is None:
             return self.log("[!] ОШИБКА: Загрузите и совместите модели!")
 
         self.ui.comp_stack.setCurrentIndex(1) # Переключаем на прогресс-бар
         self.ui.comp_progress_bar.setValue(0)
         self.ui.btn_save.setEnabled(False)
 
-        # Конвертация выбора пользователя в числа
-        sample_map = {0: 5000, 1: 20000, 2: 50000, 3: 100000}
-        samples = sample_map.get(self.ui.cb_samples.currentIndex(), 20000)
-        def_type = self.ui.cb_def_type.currentIndex() # 0, 1 или 2
-        factor = self.ui.sb_factor.value()
-
-        f_xy = float(self.ui.sb_factor.value())
-        if self.ui.chk_link_factor.isChecked():
-            comp_factor = f_xy
-        else:
-            f_z = float(self.ui.sb_factor_z.value())
-            comp_factor = [f_xy, f_xy, f_z]
-            self.log(f"   -> Режим анизотропии: F_xy={f_xy:.2f}, F_z={f_z:.2f}")
-
-        # Собираем настройки
-        settings = {
-            "def_type": self.ui.cb_def_type.currentIndex(),
-            "points": self.ui.sb_points.value(),
-            "factor": comp_factor,
-            "is_comp": True,
-            "limit": 5.0,
-            "norm": 80.0
-        }
+        settings = self.calculation_settings(True)
 
         self.comp_thread = CompensationThread(self.cad_mesh, self.scan_mesh, settings)
-        self.comp_thread.log_signal.connect(self.log)
         self.comp_thread.progress_signal.connect(self.update_progress_safe)
-        self.comp_thread.finished_signal.connect(self.on_comp_done)
-        self.comp_thread.start()
+        self.start_job(self.comp_thread, self.on_comp_done)
 
-    def cancel_comp(self):
-        if hasattr(self, 'comp_thread') and self.comp_thread.isRunning():
-            self.log("[!] Отмена расчета компенсации...")
-            self.comp_thread.requestInterruption()
-            self.comp_thread.wait(2000)  # Ожидание мягкого выхода до 2 секунд
-            if self.comp_thread.isRunning():
-                self.comp_thread.terminate()
-                self.comp_thread.wait()
-
-        self.ui.comp_stack.setCurrentIndex(0)
-        self.ui.btn_run_comp.setEnabled(True)
-        self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ КОМПЕНСАЦИЮ")
 
     def on_comp_done(self, result_mesh):
         self.comp_count += 1
@@ -1639,6 +1505,9 @@ class MainWindow(QMainWindow):
         self.ui.btn_run_comp.setText("⚡ ЗАПУСТИТЬ КОМПЕНСАЦИЮ")
         self.ui.btn_save.setEnabled(True)
         self.result_mesh = result_mesh
+        self.active_result_key = actor_key
+        self.update_result_quality()
+        self.mark_dirty()
         # Если стрелки были включены, обновляем их под новую компенсацию
         if self.ui.chk_show_vectors.isChecked():
             self.toggle_vector_field()
@@ -1656,13 +1525,13 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self.log("\n>>> Окно экспорта подтверждено. Скоро здесь будет запуск нарезки .CLS с новыми параметрами!")
 
-    def update_title(self, project_name=None):
-        title = f"Meshropractor - {project_name}" if project_name else "Meshropractor - Без названия"
-        self.setWindowTitle(title)
-        self.lbl_app_title.setText(title)
 
     def clear_project_data(self):
         """Очищает память и ОБЕ 3D-сцены для старта нового проекта"""
+        if hasattr(self, 'workspace_tools'): self.workspace_tools.clear()
+        if hasattr(self.ui, "section_panel"):
+            self.ui.section_panel.clear()
+        self.ui.lbl_align_quality.setText("Площадь в допуске и P95 появятся после совмещения.")
         self.clear_picks()
         self.cad_mesh = None
         self.scan_mesh = None
@@ -1676,6 +1545,9 @@ class MainWindow(QMainWindow):
         self.ui.chk_callouts.blockSignals(True)
         self.ui.chk_callouts.setChecked(False)
         self.ui.chk_callouts.blockSignals(False)
+        if self.ui.plotter is not None:
+            self.ui.plotter.disable_picking()
+        self._pickability.clear()
         # Сброс отображения векторов смещения
         self.ui.chk_show_vectors.blockSignals(True)
         self.ui.chk_show_vectors.setChecked(False)
@@ -1703,7 +1575,21 @@ class MainWindow(QMainWindow):
         self.ui.tbl_parts.setRowCount(0)
         self.ui.lbl_part_count.setText("Кол-во деталей: 0")
 
-        self.log("\n[i] Память и 3D-сцены полностью очищены. Начат новый проект.")
+        self.actors.clear()
+        self.def_actors_meta.clear()
+        self.scene_models.clear()
+        self.plat_actors.clear()
+        self.callout_records = []
+        self.active_result_key = None
+        self.active_heatmap_key = None
+        self.update_result_quality()
+        self.ui.lbl_active_heatmap.setText("Выберите карту в таблице слева")
+        self.def_count = self.comp_count = self.heat_count = 0
+        self._generation += 1
+        self.ui.chk_preview_pts.setChecked(False)
+        self.ui.btn_save.setEnabled(False)
+        self.update_info_combobox()
+        self.log("\n[i] Память и сцены очищены.")
 
     def add_to_recent(self, path):
         recent = self.settings.value("recent_files", [])
@@ -1763,288 +1649,9 @@ class MainWindow(QMainWindow):
                 col = 0;
                 row += 1
 
-    def save_project(self):
-        has_data = self.cad_mesh is not None or self.scan_mesh is not None or len(self.slicer_parts) > 0
 
-        if not has_data:
-            self.log("[!] ОШИБКА: Проект пуст, нечего сохранять.")
-            return
 
-        path, _ = QFileDialog.getSaveFileName(self, "Сохранить проект", "New_Project.mrp", "MeshRopractor Project (*.mrp)")
-        if not path: return
 
-        self.log(f"\n⏳ Сохранение проекта в {path}...")
-        try:
-            # Умный выбор сцены для превью
-            active_plotter = None
-            if self.ui.stack.currentWidget() == self.ui.page_slicer:
-                active_plotter = getattr(self.ui, 'slicer_plotter', None)
-            else:
-                active_plotter = getattr(self.ui, 'plotter', None)
-
-            if active_plotter:
-                # transparent_background=True убирает белый фон!
-                img_array = active_plotter.screenshot(transparent_background=True)
-                from PIL import Image
-                img = Image.fromarray(img_array)
-
-                # --- УМНАЯ ОБРЕЗКА В ИДЕАЛЬНЫЙ КВАДРАТ ПО ЦЕНТРУ ---
-                width, height = img.size
-                new_size = min(width, height)
-                left = (width - new_size) / 2
-                top = (height - new_size) / 2
-                right = (width + new_size) / 2
-                bottom = (height + new_size) / 2
-                img = img.crop((left, top, right, bottom))
-                # --------------------------------------------------
-
-                img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='PNG')
-                img_bytes = img_byte_arr.getvalue()
-            else:
-                img_bytes = b""
-
-            with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                if self.cad_mesh: zf.writestr('meshes/cad.stl', self.cad_mesh.export(file_type='stl'))
-                if self.scan_mesh: zf.writestr('meshes/scan.stl', self.scan_mesh.export(file_type='stl'))
-                if self.result_mesh: zf.writestr('meshes/result.stl', self.result_mesh.export(file_type='stl'))
-
-                meta = {
-                    "version": "1.4",
-                    "cad_pts": [list(p) for p in self.cad_pts],
-                    "scan_pts": [list(p) for p in self.scan_pts],
-                    "slicer_parts_info": [],  # Здесь будем хранить полные данные деталей
-                    "platforms": getattr(self, 'platforms', [])  # СОХРАНЯЕМ ПЛАТФОРМЫ И ЗОНЫ
-                }
-
-                # Сохраняем ВСЕ детали слайсера и их метаданные
-                for i, part_data in enumerate(self.slicer_parts):
-                    zf.writestr(f'meshes/slicer_part_{i}.stl', part_data['mesh'].export(file_type='stl'))
-
-                    # Читаем состояния чекбоксов
-                    sel_chk = False
-                    vis_chk = False
-                    if self.ui.tbl_parts.cellWidget(i, 1):
-                        sel_chk = self.ui.tbl_parts.cellWidget(i, 1).findChild(QCheckBox).isChecked()
-                    if self.ui.tbl_parts.cellWidget(i, 2):
-                        vis_chk = self.ui.tbl_parts.cellWidget(i, 2).findChild(QCheckBox).isChecked()
-
-                    # Читаем прозрачность
-                    trans_val = "0%"
-                    if self.ui.tbl_parts.item(i, 4): trans_val = self.ui.tbl_parts.item(i, 4).text()
-
-                    # Читаем цвет из 3D-сцены
-                    color_hex = "#d3d3d3"
-                    if self.ui.slicer_plotter and part_data["actor_name"] in self.ui.slicer_plotter.actors:
-                        rgb = self.ui.slicer_plotter.actors[part_data["actor_name"]].GetProperty().GetColor()
-                        color_hex = QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)).name()
-
-                    part_info = {
-                        "filename": part_data["filename"],
-                        "platform": part_data.get("platform"),  # Запоминаем машину
-                        "last_visible_mode": part_data.get("last_visible_mode", "shaded_wire"),
-                        "is_selected": sel_chk,
-                        "is_visible": vis_chk,
-                        "transparency": trans_val,
-                        "color": color_hex
-                    }
-                    meta["slicer_parts_info"].append(part_info)
-
-                    # Для обратной совместимости со старыми сохранениями
-                    meta[f"slicer_name_{i}"] = part_data['filename']
-
-                zf.writestr('project.json', json.dumps(meta, indent=4))
-                if img_bytes: zf.writestr('preview.png', img_bytes)
-
-            self.add_to_recent(path)
-            self.update_title(os.path.basename(path))
-            self.log("✅ Проект успешно сохранен!")
-        except Exception as e:
-            self.log(f"[!] Ошибка при сохранении: {str(e)}")
-
-    def action_new_project(self):
-        # Нажатие на "Новый проект" теперь полностью очищает систему
-        self.clear_project_data()
-        self.update_title(None)
-
-    def action_open_project(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Открыть проект", "", "MeshRopractor (*.mrp)")
-        if path: self.load_mrp_file(path)
-
-    def load_mrp_file(self, path):
-        self.log(f"\n⏳ Открытие проекта {path}...")
-        self.clear_project_data()
-
-        try:
-            with zipfile.ZipFile(path, 'r') as zf:
-                file_list = zf.namelist()
-                meta = json.loads(zf.read('project.json').decode('utf-8')) if 'project.json' in file_list else {}
-                has_predef = False
-
-                # --- ВОССТАНАВЛИВАЕМ ПЛАТФОРМЫ И ЗОНЫ ИЗ ПРОЕКТА ---
-                if "platforms" in meta:
-                    self.platforms = meta["platforms"]
-                    # Сохраняем их в глобальные настройки на будущее
-                    self.settings.setValue("platforms_json", json.dumps(self.platforms))
-                    # Перестраиваем интерфейс (без 3D отрисовки, она будет позже)
-                    self.update_platform_ui(draw=False)
-                    # ---------------------------------------------------
-
-                if 'meshes/cad.stl' in file_list:
-                    self.cad_mesh = trimesh.load(io.BytesIO(zf.read('meshes/cad.stl')), file_type='stl')
-                    actor_key = self.add_def_table_item(self.ui.tbl_cad, "CAD (из проекта).stl", "CAD",
-                                                        clear_table=True)
-                    self.show_mesh(actor_key, self.cad_mesh)
-                    has_predef = True
-
-                if 'meshes/scan.stl' in file_list:
-                    self.scan_mesh = trimesh.load(io.BytesIO(zf.read('meshes/scan.stl')), file_type='stl')
-                    actor_key = self.add_def_table_item(self.ui.tbl_scan, "Scan (из проекта).stl", "Scan",
-                                                        clear_table=True)
-                    self.show_mesh(actor_key, self.scan_mesh)
-                    has_predef = True
-
-                if 'meshes/result.stl' in file_list:
-                    self.result_mesh = trimesh.load(io.BytesIO(zf.read('meshes/result.stl')), file_type='stl')
-                    actor_key = self.add_def_table_item(self.ui.tbl_res, "Result (из проекта).stl", "Result",
-                                                        clear_table=False)
-                    self.show_mesh(actor_key, self.result_mesh)
-                    has_predef = True
-
-                self.pick_mode = 'CAD'
-                for pt in meta.get("cad_pts", []): self.place_marker(pt)
-                self.pick_mode = 'Scan'
-                for pt in meta.get("scan_pts", []): self.place_marker(pt)
-                self.pick_mode = None
-
-                # Восстанавливаем детали слайсера
-                slicer_files = [f for f in file_list if f.startswith('meshes/slicer_part_')]
-                if slicer_files:
-                    self.ui._ensure_slicer_plotter()
-                    self.ui.tbl_parts.blockSignals(True)
-
-                    slicer_parts_info = meta.get("slicer_parts_info", [])
-
-                    for i, s_file in enumerate(slicer_files):
-                        mesh = trimesh.load(io.BytesIO(zf.read(s_file)), file_type='stl')
-                        pv_mesh = self.trimesh_to_pyvista(mesh)
-
-                        part_id = len(self.slicer_parts)
-                        actor_name = f"slicer_part_{part_id}"
-
-                        # Берем инфу из нового сохранения или генерируем базовую, если проект старый
-                        if i < len(slicer_parts_info):
-                            p_info = slicer_parts_info[i]
-                        else:
-                            p_info = {
-                                "filename": meta.get(f"slicer_name_{i}", f"Project_Part_{part_id + 1}.stl"),
-                                "platform": None, "last_visible_mode": "shaded_wire",
-                                "is_selected": True, "is_visible": True, "transparency": "0%", "color": "#d3d3d3"
-                            }
-
-                        if self.ui.slicer_plotter:
-                            actor = self.ui.slicer_plotter.add_mesh(pv_mesh, color=p_info["color"], show_edges=(
-                                        p_info["last_visible_mode"] == "shaded_wire"), name=actor_name)
-                            if p_info["transparency"].endswith('%'):
-                                actor.GetProperty().SetOpacity(1.0 - (int(p_info["transparency"][:-1]) / 100.0))
-
-                        self.slicer_parts.append({
-                            "mesh": mesh, "mesh_pv": pv_mesh,
-                            "filename": p_info["filename"], "actor_name": actor_name,
-                            "last_visible_mode": p_info["last_visible_mode"],
-                            "platform": p_info["platform"]
-                        })
-
-                        row = self.ui.tbl_parts.rowCount()
-                        self.ui.tbl_parts.insertRow(row)
-
-                        item_id = QTableWidgetItem(str(row + 1))
-                        item_id.setTextAlignment(Qt.AlignCenter)
-                        item_id.setFlags(item_id.flags() & ~Qt.ItemIsEditable)
-                        self.ui.tbl_parts.setItem(row, 0, item_id)
-
-                        # --- Выбранные ---
-                        sel_container = QWidget()
-                        sel_layout = QHBoxLayout(sel_container)
-                        sel_layout.setContentsMargins(0, 0, 0, 0)
-                        sel_layout.setAlignment(Qt.AlignCenter)
-                        chk_sel = QCheckBox()
-                        chk_sel.setFixedSize(20, 20)
-                        chk_sel.setChecked(p_info["is_selected"])
-                        chk_sel.setCursor(Qt.PointingHandCursor)
-                        sel_layout.addWidget(chk_sel)
-                        self.ui.tbl_parts.setCellWidget(row, 1, sel_container)
-
-                        # --- Видимые ---
-                        vis_container = QWidget()
-                        vis_layout = QHBoxLayout(vis_container)
-                        vis_layout.setContentsMargins(0, 0, 0, 0)
-                        vis_layout.setAlignment(Qt.AlignCenter)
-                        chk_vis = QCheckBox()
-                        chk_vis.setFixedSize(20, 20)
-                        chk_vis.setChecked(p_info["is_visible"])
-                        chk_vis.setCursor(Qt.PointingHandCursor)
-                        chk_vis.toggled.connect(lambda checked, r=row: self._on_vis_checkbox_changed(r, checked))
-                        vis_layout.addWidget(chk_vis)
-                        self.ui.tbl_parts.setCellWidget(row, 2, vis_container)
-
-                        # --- Затенение и Прозрачность ---
-                        mode_labels = {
-                            "hide": "Скрыто", "shaded": "Затенение", "triangles": "Треугольники",
-                            "shaded_wire": "Зат.+каркас", "wireframe": "Каркас",
-                            "bbox": "Огр. паралл.", "transparent": "Прозрачность", "flat": "Без затенения"
-                        }
-                        mode_str = mode_labels.get(p_info["last_visible_mode"], "Зат.+каркас") if p_info[
-                            "is_visible"] else "Скрыто"
-                        self.ui.tbl_parts.setItem(row, 3, QTableWidgetItem(mode_str))
-                        self.ui.tbl_parts.setItem(row, 4, QTableWidgetItem(p_info["transparency"]))
-
-                        # --- Цвет ---
-                        color_container = QWidget()
-                        color_layout = QHBoxLayout(color_container)
-                        color_layout.setContentsMargins(0, 0, 0, 0)
-                        color_layout.setAlignment(Qt.AlignCenter)
-                        btn_color = QPushButton()
-                        btn_color.setFixedSize(24, 24)
-                        btn_color.setCursor(Qt.PointingHandCursor)
-                        btn_color.setStyleSheet(
-                            f"background-color: {p_info['color']}; border: 1px solid #555; border-radius: 3px;")
-                        btn_color.clicked.connect(
-                            lambda checked=False, r=row, b=btn_color: self.pick_slicer_part_color(r, b))
-                        color_layout.addWidget(btn_color)
-                        self.ui.tbl_parts.setCellWidget(row, 5, color_container)
-
-                        # --- Название ---
-                        self.ui.tbl_parts.setItem(row, 6, QTableWidgetItem(p_info["filename"]))
-
-                    if self.ui.slicer_plotter:
-                        self.ui.slicer_plotter.reset_camera()
-                        self.ui.slicer_plotter.render()
-
-                    self.ui.tbl_parts.blockSignals(False)
-
-                    # ПРИМЕНЯЕМ ФИЛЬТРАЦИЮ ПЛАТФОРМ И ВИДИМОСТИ СРАЗУ ПОСЛЕ ЗАГРУЗКИ
-                    self.refresh_scene_visibility()
-                    self.update_parts_table_filter(self.ui.scene_tabs.currentIndex())
-
-            self.add_to_recent(path)
-            self.update_title(os.path.basename(path))
-
-            if self.ui.plotter:
-                self.ui.plotter.reset_camera()
-
-            # Умное переключение: если загрузили только Слайсер - открываем его!
-            if slicer_files and not has_predef:
-                self.ui.stack.setCurrentWidget(self.ui.page_slicer)
-            else:
-                self.ui.stack.setCurrentWidget(self.ui.page_predef)
-
-            self.log("✅ Проект успешно восстановлен!")
-
-        except zipfile.BadZipFile:
-            self.log("[!] ОШИБКА: Файл поврежден или не является архивом .mrp")
-        except Exception as e:
-            self.log(f"[!] Ошибка: {str(e)}")
 
     def action_show_donate(self):
         # Импортируем наше новое окно
@@ -2057,7 +1664,8 @@ class MainWindow(QMainWindow):
         from UI_Meshropractor import DialogPlatformManager
 
         # Передаем текущие платформы в окно при открытии
-        dialog = DialogPlatformManager(self, self.platforms)
+        if self._busy(): return
+        dialog = DialogPlatformManager(self, deepcopy(self.platforms))
 
         # Привязываем кнопку "Применить"
         dialog.btn_apply.clicked.connect(lambda: self.apply_platform_settings(dialog))
@@ -2067,20 +1675,23 @@ class MainWindow(QMainWindow):
     def apply_platform_settings(self, dialog):
         """Срабатывает при нажатии 'Применить' в менеджере"""
         new_platforms = dialog.get_data()
-
-        # УМНОЕ ОБНОВЛЕНИЕ ИМЕН: Если мы переименовали платформу,
-        # нужно обновить её имя и во всех деталях, чтобы они не исчезли!
-        if hasattr(self, 'platforms'):
-            for old_p, new_p in zip(self.platforms, new_platforms):
-                if old_p["name"] != new_p["name"]:
-                    for part in self.slicer_parts:
-                        if part.get("platform") == old_p["name"]:
-                            part["platform"] = new_p["name"]
+        try:
+            validate_platforms(new_platforms)
+        except ValueError as exc:
+            self.log(f"[!] {exc}")
+            return
+        old_ids = {p["name"]: p.get("id") for p in self.platforms}
+        new_names = {p.get("id"): p["name"] for p in new_platforms}
+        for part in self.slicer_parts:
+            old_id = old_ids.get(part.get("platform"))
+            if old_id:
+                part["platform"] = new_names.get(old_id)
 
         self.platforms = new_platforms
         self.settings.setValue("platforms_json", json.dumps(self.platforms))
 
         self.update_platform_ui(draw=True)
+        self.mark_dirty()
         self.log("[i] Настройки платформ успешно сохранены.")
 
     def update_platform_ui(self, draw=True):
@@ -2210,8 +1821,13 @@ class MainWindow(QMainWindow):
             else:
                 actor = self.ui.slicer_plotter.actors.get(part["actor_name"])
                 if actor: actor.SetVisibility(False)
+                bbox = self.ui.slicer_plotter.actors.get(part["actor_name"] + "__bbox")
+                if bbox: bbox.SetVisibility(False)
 
+        self.ui.section_panel.refresh()
         self.ui.slicer_plotter.render()
+
+        if hasattr(self, 'workspace_tools'): self.workspace_tools.supports.refresh_panel()
 
     def draw_platform(self, plat_data):
         """Рисует серую металлическую плиту, синий каркас камеры и запретные зоны"""
@@ -2273,9 +1889,10 @@ class MainWindow(QMainWindow):
         """Включает/выключает режим интерактивной расстановки флажков кликом мыши"""
         if not getattr(self.ui, 'plotter', None):
             return
+        self._configure_heatmap_picking()
 
         if self.ui.chk_callouts.isChecked():
-            if self.pv_heatmap is None or not self.actors.get("Heatmap"):
+            if self.pv_heatmap is None or not self.actors.get(self.active_heatmap_key):
                 self.log("[!] Сначала постройте цветовую карту (Heatmap).")
                 self.ui.chk_callouts.blockSignals(True)
                 self.ui.chk_callouts.setChecked(False)
@@ -2302,9 +1919,12 @@ class MainWindow(QMainWindow):
 
     def add_heatmap_callout(self, point):
         """Обрабатывает координаты клика, находит ближайшее отклонение и рисует выноску"""
-        if self.pv_heatmap is None or point is None:
+        if self.pv_heatmap is None or point is None or (self._job is not None and not self._restoring):
             return
 
+        actor = self.actors.get(self.active_heatmap_key)
+        if actor is None or (not actor.GetVisibility() and not self._restoring):
+            return
         # Защита от клика в пустоту мимо геометрии
         idx = self.pv_heatmap.find_closest_point(point)
         coord = self.pv_heatmap.points[idx]
@@ -2345,6 +1965,8 @@ class MainWindow(QMainWindow):
             )
 
         self.callout_actors.append(actor)
+        self.callout_records.append(dict(key=self.active_heatmap_key, point=np.asarray(coord).tolist()))
+        self.mark_dirty()
         self.log(
             f"📍 Точка #{len(self.callout_actors)}: {label_text} (XYZ: {coord[0]:.1f}, {coord[1]:.1f}, {coord[2]:.1f})")
 
@@ -2356,6 +1978,8 @@ class MainWindow(QMainWindow):
         for actor in self.callout_actors:
             self.ui.plotter.remove_actor(actor)
         self.callout_actors.clear()
+        self.callout_records = []
+        self.mark_dirty()
         self.ui.plotter.render()
         self.log("Все флажки замеров удалены.")
 

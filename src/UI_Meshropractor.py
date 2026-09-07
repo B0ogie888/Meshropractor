@@ -1,6 +1,8 @@
 # Файл: UI_Meshropractor.py
 import sys
 import os
+from copy import deepcopy
+from uuid import uuid4
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QSlider, QCheckBox, QGroupBox, QTextEdit,
@@ -8,7 +10,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QToolBar, QStyle, QMainWindow,
                                QToolButton, QMenu, QStackedWidget, QLineEdit, QProgressBar, QFileDialog,
                                QDialog, QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton, QComboBox, QSpinBox,
-                               QFrame, QAbstractItemView, QStyledItemDelegate, QButtonGroup, QDoubleSpinBox)
+                               QFrame, QAbstractItemView, QStyledItemDelegate, QButtonGroup, QDoubleSpinBox, QDockWidget)
 from PySide6.QtCore import Qt, QByteArray
 from PySide6.QtGui import QPixmap, QIcon, QAction
 from pyvistaqt import QtInteractor
@@ -102,7 +104,6 @@ class Ui_MainWindow(object):
     """Класс, который отвечает ТОЛЬКО за внешний вид программы"""
 
     def setupUi(self, main_window: QMainWindow):
-        print("[DEBUG] setupUi: старт", flush=True)
         self.sliders = {}
         self.mesh_colors = {
             "CAD": "#1f77b4",
@@ -112,7 +113,7 @@ class Ui_MainWindow(object):
         self.ribbon_btns = {}
 
         # === БАЗОВЫЕ НАСТРОЙКИ ОКНА ===
-        main_window.setWindowTitle("DeWarp Enterprise V6.1")
+        main_window.setWindowTitle("Meshropractor")
         main_window.resize(1600, 900)
         main_window.setWindowFlags(Qt.FramelessWindowHint)
         main_window.setMinimumSize(800, 600)
@@ -196,9 +197,13 @@ class Ui_MainWindow(object):
                     QCheckBox::indicator:checked { background-color: #333; border: 2px solid #c0392b; border-radius: 4px; }
                 """)
         main_window.setCentralWidget(self.central_widget)
+        check_path = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'assets', 'checkmark.svg').replace('\\', '/')
+        main_window.setStyleSheet(main_window.styleSheet() + f'QCheckBox::indicator:checked {{background-color: #a52d2d; image: url("{check_path}");}}')
 
         self.base_layout = QVBoxLayout(self.central_widget)
         self.base_layout.setContentsMargins(5, 5, 5, 5)
+        self.status_label = QLabel("Готово")
+        main_window.statusBar().addWidget(self.status_label, 1)
 
         # === ВЕРХНИЙ КАСТОМНЫЙ ЗАГОЛОВОК ===
         self.title_bar = QWidget()
@@ -231,9 +236,21 @@ class Ui_MainWindow(object):
         action_slicer = QAction("🔪 Слайсер", main_window)
         action_predef = QAction("🕸 Предеформация", main_window)
         action_inspect = QAction("🔍 Инспектирование", main_window)
-        action_report = QAction("📄 Отчет", main_window)
+        action_report = QAction("📄 Отчет (в разработке)", main_window)
+        action_report.setEnabled(False)
+        action_inspect.setEnabled(False)
+        action_inspect.setToolTip("В разработке; измерения доступны на картах отклонений")
 
         self.dropdown_menu.addActions([action_start, action_slicer, action_predef, action_inspect, action_report])
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.document().setMaximumBlockCount(2000)
+        self.log_dock = QDockWidget("Журнал операций", main_window)
+        self.log_dock.setWidget(self.log_view)
+        main_window.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
+        self.log_dock.hide()
+        self.dropdown_menu.addSeparator()
+        self.dropdown_menu.addAction(self.log_dock.toggleViewAction())
         self.menu_btn.setMenu(self.dropdown_menu)
         self.title_layout.addWidget(self.menu_btn)
 
@@ -320,24 +337,27 @@ class Ui_MainWindow(object):
         action_inspect.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_inspect))
         action_report.triggered.connect(lambda: self.stack.setCurrentWidget(self.page_report))
 
-        self.btn_new_project.clicked.connect(self.show_new_project_dialog)
+        # Project creation is owned by the controller, including cancellation.
 
         # Стартовая страница по умолчанию
         self.stack.setCurrentWidget(self.page_start)
-        print("[DEBUG] setupUi ПОЛНОСТЬЮ завершен OK", flush=True)
 
     def _build_standard_part_table(self):
         """Вспомогательный метод для создания пустой таблицы в стиле Слайсера"""
         tbl = QTableWidget(0, 7)
-        tbl.setHorizontalHeaderLabels(["#", "Выбранные ▾", "Видимые", "Затенение", "Прозр.", "Цвет", "Название"])
+        tbl.setHorizontalHeaderLabels(["#", "Выбр.", "Вид.", "Затенение", "Прозр.", "Цвет", "Название"])
         tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        tbl.horizontalHeader().setStretchLastSection(True)
+        tbl.horizontalHeader().setStretchLastSection(False)
+        tbl.horizontalHeader().moveSection(6, 1)
+        tbl.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         tbl.horizontalHeader().resizeSection(0, 25)
-        tbl.horizontalHeader().resizeSection(1, 85)
-        tbl.horizontalHeader().resizeSection(2, 70)
+        tbl.horizontalHeader().resizeSection(1, 48)
+        tbl.horizontalHeader().resizeSection(2, 48)
         tbl.horizontalHeader().resizeSection(3, 70)
         tbl.horizontalHeader().resizeSection(4, 50)
         tbl.horizontalHeader().resizeSection(5, 50)
+        tbl.setMinimumHeight(70)
+        tbl.setMaximumHeight(130)
         tbl.verticalHeader().setVisible(False)
         tbl.setSelectionMode(QAbstractItemView.NoSelection)
         tbl.setFocusPolicy(Qt.NoFocus)
@@ -349,19 +369,18 @@ class Ui_MainWindow(object):
         """Лениво создает VTK-сцену слайсера"""
         if self.slicer_plotter is not None:
             return
-        print("[DEBUG] Ленивое создание slicer_plotter...", flush=True)
         self.slicer_plotter = QtInteractor(self._slicer_center_container)
         self.slicer_plotter.setCursor(Qt.ArrowCursor)
         self.slicer_plotter.set_background('white')
         self.slicer_plotter.add_axes()
         self.slicer_plotter.winId()  # Заставляем Qt выделить память до скрытия
-        self._slicer_center_layout.insertWidget(0, self.slicer_plotter)
+        self._slicer_center_layout.insertWidget(1 if hasattr(self, 'surface_toolbar') else 0, self.slicer_plotter)
+        if hasattr(self, 'workspace_tools'): self.workspace_tools.attach(self.slicer_plotter)
 
     def _ensure_def_plotter(self):
         """Лениво создает VTK-сцену предеформации"""
         if self.plotter is not None:
             return
-        print("[DEBUG] Ленивое создание plotter предеформации...", flush=True)
         self.plotter = QtInteractor(self._def_center_container)
         self.plotter.setCursor(Qt.ArrowCursor)
         self.plotter.set_background('white')
@@ -566,21 +585,9 @@ class Ui_MainWindow(object):
         # --- 1. Отображение ---
         grp_disp = CollapsibleBox("▼ Отображение")
         tabs_disp = QTabWidget()
-        tab_sec = QWidget()
-        lo_sec = QVBoxLayout(tab_sec)
-        tbl_sec = QTableWidget(5, 6)
-        tbl_sec.setHorizontalHeaderLabels(["Активно", "Тип", "Отсечь", "Цвет", "Позиция", "Шаг"])
-        tbl_sec.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        tbl_sec.verticalHeader().setVisible(False)
-        lo_sec.addWidget(tbl_sec)
-        h_sec = QHBoxLayout()
-        h_sec.addWidget(QPushButton("Указать"))
-        h_sec.addWidget(QPushButton("Выровнять"))
-        h_sec.addWidget(QPushButton("Экспорт ▾"))
-        h_sec.addWidget(QSlider(Qt.Horizontal))
-        lo_sec.addLayout(h_sec)
-        tabs_disp.addTab(tab_sec, "Сечения")
-        tabs_disp.addTab(QWidget(), "Срезы")
+        from section_panel import SectionPanel
+        self.section_panel = SectionPanel()
+        tabs_disp.addTab(self.section_panel, "Сечения")
         grp_disp.content_layout.addWidget(tabs_disp)
         layout.addWidget(grp_disp, stretch=1)
 
@@ -726,23 +733,9 @@ class Ui_MainWindow(object):
 
         # --- 4. Измерения ---
         grp_meas = CollapsibleBox("▼ Измерения")
-        tabs_meas = QTabWidget()
-        tab_dist = QWidget()
-        lo_dist = QVBoxLayout(tab_dist)
-        lo_dist.addWidget(QLabel("📏 🟢 🟩 (Тулбар измерений)", styleSheet="color: white;"))
-        info_meas = QGroupBox("Информация о измерениях")
-        info_meas.setFixedHeight(60)
-        info_meas.setStyleSheet(
-            "QGroupBox { border: 1px solid #444; margin-top: 15px; color: #aaa; font-weight: bold; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; top: -10px; }")
-        lo_dist.addWidget(info_meas)
-        lo_dist.addWidget(QCheckBox("Скрыто"))
-        h_meas_btn = QHBoxLayout()
-        h_meas_btn.addWidget(QPushButton("Выбрать"))
-        h_meas_btn.addWidget(QPushButton("Очистить"))
-        lo_dist.addLayout(h_meas_btn)
-        tabs_meas.addTab(tab_dist, "Расстояние")
-        tabs_meas.addTab(QWidget(), "Угол")
-        grp_meas.content_layout.addWidget(tabs_meas)
+        from measurement_panel import MeasurementPanel
+        self.measurement_panel = MeasurementPanel()
+        grp_meas.content_layout.addWidget(self.measurement_panel)
         layout.addWidget(grp_meas, stretch=1)
 
         # --- 5. Исправления деталей (ВОССТАНОВЛЕНО) ---
@@ -760,16 +753,21 @@ class Ui_MainWindow(object):
 
         layout.addStretch()
         scroll.setWidget(content)
+        self.slicer_left_layout = layout
+        self.slicer_normal_groups = [grp_parts, grp_notes, grp_fix]
+        self.slicer_left_scroll = scroll
         return scroll
 
     def create_main_ribbon_tab(self):
         """Создает вкладку 'ГЛАВНАЯ' с группами кнопок (Проект, Детали) и разделителем"""
-        from PySide6.QtWidgets import QFrame  # На всякий случай импортируем здесь
+        from tool_ribbon import main_icon
+        from PySide6.QtCore import QSize
+        from PySide6.QtWidgets import QToolButton, QFrame  # На всякий случай импортируем здесь
         container = QWidget()
         container.setStyleSheet("background-color: #2b2b2b;")
         main_h_layout = QHBoxLayout(container)
         main_h_layout.setAlignment(Qt.AlignLeft)
-        main_h_layout.setContentsMargins(8, 2, 8, 2)
+        main_h_layout.setContentsMargins(8, 0, 8, 0)
         main_h_layout.setSpacing(15)
 
         def create_group(title, button_names):
@@ -782,14 +780,19 @@ class Ui_MainWindow(object):
             btn_layout = QHBoxLayout()
             btn_layout.setSpacing(5)
             for name in button_names:
-                btn = QPushButton(name)
-                btn.setFixedHeight(50)  # Фиксируем только высоту
+                btn = QToolButton()
+                btn.setText(name)
+                btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+                btn.setIcon(main_icon(name.replace('\n', ' ')))
+                btn.setIconSize(QSize(28, 28))
+                btn.setToolTip(name.replace('\n', ' '))
+                btn.setFixedHeight(60)  # Фиксируем только высоту
                 btn.setMinimumWidth(75)  # Минимальная ширина для коротких названий
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.setStyleSheet("""
-                                QPushButton { background-color: transparent; color: #e0e0e0; border: none; border-radius: 4px; font-size: 11px; font-weight: bold; padding: 0 6px; }
-                                QPushButton:hover { background-color: #383838; border: 1px solid #666666; color: #ffffff; }
-                                QPushButton:pressed { background-color: #222222; border: 1px solid #b31b1b; }
+                                QToolButton { background-color: transparent; color: #e0e0e0; border: none; border-radius: 4px; font-size: 11px; font-weight: bold; padding: 0 6px; }
+                                QToolButton:hover { background-color: #383838; border: 1px solid #666666; color: #ffffff; }
+                                QToolButton:pressed { background-color: #222222; border: 1px solid #b31b1b; }
                             """)
                 clean_name = name.replace('\n', ' ')
                 self.ribbon_btns[clean_name] = btn
@@ -825,7 +828,7 @@ class Ui_MainWindow(object):
         layout.setSpacing(0)
 
         self.magics_ribbon = QTabWidget()
-        self.magics_ribbon.setFixedHeight(95)
+        self.magics_ribbon.setFixedHeight(110)
         self.magics_ribbon.setStyleSheet("""
             QTabWidget::pane { border-top: 1px solid #444444; background-color: #2b2b2b; }
             QTabBar::tab { background-color: #222222; color: #aaaaaa; padding: 8px 15px; font-weight: bold; border: none; }
@@ -837,21 +840,31 @@ class Ui_MainWindow(object):
         self.magics_ribbon.addTab(self.create_main_ribbon_tab(), "ГЛАВНАЯ")
 
         # === ВОССТАНОВЛЕННЫЕ ОСТАЛЬНЫЕ ВКЛАДКИ ===
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Создать", "Дублировать", "Пакетное\nдублирование"], "Создание"), "ИНСТРУМЕНТЫ")
+        from tool_ribbon import create_tools_ribbon
+        tools_panel, self.tools_buttons = create_tools_ribbon()
+        self.magics_ribbon.addTab(tools_panel, "ИНСТРУМЕНТЫ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Автоисправление", "Бормашина", "Отверстия", "Триксел"], "Лечение сетки"), "ИСПРАВЛЕНИЕ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Текстура 1", "Текстура 2"], "Текстурирование"), "ТЕКСТУРЫ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Перемещать", "Вращать", "Масштабировать", "Озеркалить"], "Позиционирование"), "РАСПОЛОЖЕНИЕ")
+        self.magics_ribbon.addTab(self.create_ribbon_tab(["Перемещать", "Вращать", "Масштабировать", "Отзеркалить"], "Позиционирование"), "РАСПОЛОЖЕНИЕ")
+        self.position_buttons = {name: self.ribbon_btns[name] for name in ("Перемещать", "Вращать", "Масштабировать", "Отзеркалить")}
         # === вкладку менеджера платформ ===
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Управление\nплатформами"], "Оборудование"), "ПЛАТФОРМЫ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Колонны", "Решетка", "Контурные\nподдержки"], "Генерация"), "ПОДДЕРЖКИ")
+        from workspace_icons import create_workspace_ribbon, SUPPORT_NAMES, workspace_icon
+        platform_panel, platform_buttons = create_workspace_ribbon(["Управление платформами"], ['platform'])
+        self.ribbon_btns.update(platform_buttons)
+        self.magics_ribbon.addTab(platform_panel, workspace_icon('platform'), "ПЛАТФОРМЫ")
+        support_panel, support_buttons = create_workspace_ribbon(SUPPORT_NAMES, ['support', 'selected', 'tree', 'manual', 'preview'])
+        self.ribbon_btns.update(support_buttons)
+        self.magics_ribbon.addTab(support_panel, "ПОДДЕРЖКИ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Heatmap", "Сравнение", "Мин/Макс\nтолщины"], "Контроль"), "АНАЛИЗ И ОТЧЕТЫ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Создание срезов\nConcept Laser"], "Concept Laser"), "СРЕЗЫ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Цвет деталей", "Прозрачность", "Отображение\nсетки"], "Визуализация"), "ОТОБРАЖЕНИЕ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Параметры", "Язык", "Горячие\nклавиши"], "Система"), "НАСТРОЙКИ И ПОМОЩЬ")
 
+        self.ribbon_btns.update(self.tools_buttons)
         layout.addWidget(self.magics_ribbon)
 
         slicer_splitter = QSplitter(Qt.Horizontal)
+        self.slicer_splitter = slicer_splitter
         layout.addWidget(slicer_splitter)
 
         slicer_left_panel = self.create_magics_left_panel()
@@ -972,12 +985,17 @@ class Ui_MainWindow(object):
         self.grp_heat = CollapsibleBox("▼ Карты отклонений")
         self.tbl_heat = self._build_standard_part_table()
         self.grp_heat.content_layout.addWidget(self.tbl_heat)
+        self.lbl_active_heatmap = QLabel("Выберите карту в таблице слева")
+        self.grp_heat.content_layout.addWidget(self.lbl_active_heatmap)
         content_layout.addWidget(self.grp_heat)
 
         # 4. Группа Результаты
         self.grp_res = CollapsibleBox("▼ Результаты (Компенсация)")
         self.tbl_res = self._build_standard_part_table()
         self.grp_res.content_layout.addWidget(self.tbl_res)
+        self.lbl_result_quality = QLabel("Выберите результат для экспорта и просмотра показателей")
+        self.lbl_result_quality.setWordWrap(True)
+        self.grp_res.content_layout.addWidget(self.lbl_result_quality)
         content_layout.addWidget(self.grp_res)
 
         content_layout.addStretch()
@@ -1069,7 +1087,7 @@ class Ui_MainWindow(object):
         group_files = QGroupBox("Элементы")
         fl = QGridLayout(group_files)
         fl.addWidget(QLabel("Номинальная модель (CAD):"), 0, 0)
-        self.btn_load_cad = QPushButton("📁 Загрузить CAD (.stl)")
+        self.btn_load_cad = QPushButton("📁 CAD: STL / STEP")
         fl.addWidget(self.btn_load_cad, 0, 1)
 
         fl.addWidget(QLabel("Фактическая сетка (Скан):"), 1, 0)
@@ -1110,6 +1128,21 @@ class Ui_MainWindow(object):
         self.chk_icp.setStyleSheet("margin-top: 10px; font-weight: bold;")
         pl.addWidget(self.chk_icp, 4, 0, 1, 2)
 
+        self.sb_align_tolerance = QDoubleSpinBox()
+        self.sb_align_tolerance.setDecimals(4)
+        self.sb_align_tolerance.setRange(0, 1000)
+        self.sb_align_tolerance.setSpecialValueText("Авто: 0,2% габарита")
+        self.sb_align_tolerance.setSuffix(" мм")
+        self.sb_align_tolerance.setSingleStep(.05)
+        self.sb_align_tolerance.setToolTip("Допуск захвата и оценки совпадения площади скана с CAD")
+        pl.addWidget(QLabel("Допуск совпадения:"), 5, 0)
+        pl.addWidget(self.sb_align_tolerance, 5, 1)
+        self.sb_align_coverage = QDoubleSpinBox()
+        self.sb_align_coverage.setRange(1, 100)
+        self.sb_align_coverage.setValue(30)
+        self.sb_align_coverage.setSuffix(" %")
+        pl.addWidget(QLabel("Минимум площади скана в допуске:"), 6, 0)
+        pl.addWidget(self.sb_align_coverage, 6, 1)
         l.addWidget(group_params)
 
         # 5. Результат
@@ -1122,12 +1155,18 @@ class Ui_MainWindow(object):
         rl.addWidget(self.lbl_rmse)
         l.addWidget(group_res)
 
+        self.lbl_align_quality = QLabel("Площадь в допуске и P95 появятся после совмещения.")
+        self.lbl_align_quality.setWordWrap(True)
+        l.addWidget(self.lbl_align_quality)
         # Кнопка запуска
         self.btn_run_icp = QPushButton("▶ ВЫПОЛНИТЬ ВЫРАВНИВАНИЕ")
         self.btn_run_icp.setCursor(Qt.PointingHandCursor)
         self.btn_run_icp.setStyleSheet(
             "height: 50px; background-color: #2c3e50; color: white; font-weight: bold; font-size: 14px; border-radius: 4px; margin-top: 10px;")
         l.addWidget(self.btn_run_icp)
+        self.btn_cancel_align = QPushButton("Отменить совмещение")
+        self.btn_cancel_align.setEnabled(False)
+        l.addWidget(self.btn_cancel_align)
         l.addStretch()
 
     def initHeatmapTab(self):
@@ -1292,6 +1331,20 @@ class Ui_MainWindow(object):
         self.sb_points_wrapper = self.create_spinbox_wrapper(self.sb_points)
         self.sb_points_wrapper.setEnabled(False)  # Изначально заблокировано пресетом
         glayout.addWidget(self.sb_points_wrapper, 2, 1)
+        self.sb_max_deviation = QDoubleSpinBox()
+        self.sb_max_deviation.setRange(0.001, 1000.0)
+        self.sb_max_deviation.setDecimals(3)
+        self.sb_max_deviation.setValue(5.0)
+        self.sb_max_deviation.setSuffix(" мм")
+        glayout.addWidget(QLabel("Предел поиска отклонений:"), 3, 0)
+        glayout.addWidget(self.sb_max_deviation, 3, 1)
+        self.sb_min_coverage = QDoubleSpinBox()
+        self.sb_min_coverage.setRange(1.0, 100.0)
+        self.sb_min_coverage.setValue(30.0)
+        self.sb_min_coverage.setSuffix(" %")
+        self.sb_min_coverage.setToolTip("Минимальная доля подтверждённых измерений. Порог не заменяет проверку качества скана.")
+        glayout.addWidget(QLabel("Минимальное покрытие:"), 4, 0)
+        glayout.addWidget(self.sb_min_coverage, 4, 1)
 
         self.cb_samples.currentIndexChanged.connect(self._on_sample_type_changed)
 
@@ -1641,6 +1694,8 @@ class DialogNewProject(QDialog):
 
         self.btn_report = QPushButton("📄\nОтчет\n(Генерация документации)")
         self.btn_report.setFixedSize(190, 110)
+        self.btn_report.setEnabled(False)
+        self.btn_inspect.setEnabled(False)
         self.btn_report.setCursor(Qt.PointingHandCursor)
 
         grid.addWidget(self.btn_slicer, 0, 0)
@@ -1741,6 +1796,7 @@ class DialogPlatformManager(QDialog):
         self.table.setItem(row, 0, item_id)
 
         item_name = QTableWidgetItem(plat_dict["name"])
+        plat_dict = deepcopy(plat_dict)
         # ХРАНИМ ВЕСЬ СЛОВАРЬ (С ЗОНАМИ), А НЕ ТОЛЬКО DIM
         item_name.setData(Qt.UserRole, plat_dict)
         self.table.setItem(row, 1, item_name)
@@ -1809,6 +1865,7 @@ class DialogEditPlatform(QDialog):
 
     def __init__(self, parent=None, platform_data=None):
         super().__init__(parent)
+        self.platform_id = (platform_data or {}).get("id", str(uuid4()))
         self.setWindowTitle("Настройка платформы")
         self.resize(650, 420)
 
@@ -1867,7 +1924,7 @@ class DialogEditPlatform(QDialog):
             self.le_z.setText(str(dim[2]))
 
             self.chk_use_zones.setChecked(platform_data.get("use_zones", False))
-            self.zones_data = platform_data.get("zones", [])
+            self.zones_data = deepcopy(platform_data.get("zones", []))
         else:
             # Стартовые зоны для новой платформы
             self.zones_data = [
@@ -2099,6 +2156,7 @@ class DialogEditPlatform(QDialog):
             x, y, z = 220.0, 220.0, 280.0
 
         return {
+            "id": self.platform_id,
             "name": name,
             "dim": [x, y, z],
             "use_zones": self.chk_use_zones.isChecked(),
