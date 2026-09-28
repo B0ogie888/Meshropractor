@@ -6,10 +6,24 @@ from trimesh.triangles import closest_point
 class SurfaceTopology:
     def __init__(self, mesh):
         self.mesh = mesh
-        self.neighbors = [[] for _ in mesh.faces]
-        for a, b in mesh.face_adjacency:
-            self.neighbors[a].append(b)
-            self.neighbors[b].append(a)
+        self._neighbors = None
+        self._triangle_bounds = None
+
+    @property
+    def neighbors(self):
+        if self._neighbors is None:
+            # CSR uses compact integer arrays, avoiding millions of Python lists.
+            from scipy.sparse import csr_matrix
+            pairs = self.mesh.face_adjacency
+            row = np.concatenate((pairs[:, 0], pairs[:, 1]))
+            col = np.concatenate((pairs[:, 1], pairs[:, 0]))
+            self._neighbors = csr_matrix((np.ones(len(row), dtype=np.uint8), (row, col)),
+                                         shape=(len(self.mesh.faces), len(self.mesh.faces)))
+        return self._neighbors
+
+    def neighbor_ids(self, face):
+        graph = self.neighbors
+        return graph.indices[graph.indptr[face]:graph.indptr[face+1]]
 
     def select(self, seed, mode, point=None, angle=5., radius=3.):
         if seed < 0 or seed >= len(self.mesh.faces): return set()
@@ -23,16 +37,20 @@ class SurfaceTopology:
         elif mode == 'brush':
             point = np.asarray(point)
             triangles = self.mesh.triangles
-            candidates = np.flatnonzero(np.all(triangles.min(axis=1) <= point + radius, axis=1)
-                                        & np.all(triangles.max(axis=1) >= point - radius, axis=1))
+            if self._triangle_bounds is None:
+                self._triangle_bounds = triangles.min(axis=1), triangles.max(axis=1)
+            low, high = self._triangle_bounds
+            candidates = np.flatnonzero(np.all(low <= point + radius, axis=1)
+                                        & np.all(high >= point - radius, axis=1))
             allowed[:] = False
             if len(candidates):
                 nearest = closest_point(triangles[candidates], np.tile(point, (len(candidates), 1)))
                 allowed[candidates] = np.linalg.norm(nearest - point, axis=1) <= radius
         found, pending = {int(seed)}, [int(seed)]
+        neighbors = self.neighbors
         while pending:
             current = pending.pop()
-            for other in self.neighbors[current]:
+            for other in neighbors.indices[neighbors.indptr[current]:neighbors.indptr[current+1]]:
                 if other in found or not allowed[other]: continue
                 if mode in ('smooth', 'brush') and normals[current] @ normals[other] < threshold: continue
                 found.add(int(other))

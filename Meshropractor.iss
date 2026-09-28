@@ -1,14 +1,37 @@
-; Compile after: .\.venv\Scripts\python.exe -m PyInstaller --noconfirm Meshropractor.spec
+; First build RepairEngine.spec, then Meshropractor.spec with PyInstaller.
 ; Inno Setup 6.3+ / 7, Windows x64. Copy the entire PyInstaller onedir distribution.
 #define MyAppName "Meshropractor"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.5"
+  #define VersionFile FileOpen(SourcePath + "VERSION")
+  #if VersionFile < 0
+    #error Cannot read VERSION from the project directory.
+  #endif
+  #define MyAppVersion Trim(FileRead(VersionFile))
+  #expr FileClose(VersionFile)
 #endif
+
 #define MyAppExeName "Meshropractor.exe"
 #define BuildDir SourcePath + "dist\Meshropractor"
 
+#if !FileExists(BuildDir + "\_internal\repair_engine\MeshRepairEngine.exe")
+  #error Build RepairEngine.spec and then Meshropractor.spec to include the full repair engine.
+#endif
+
 #if !FileExists(BuildDir + "\" + MyAppExeName)
   #error Build dist\Meshropractor with PyInstaller before compiling this installer.
+#endif
+
+#if !FileExists(BuildDir + "\_internal\VERSION")
+  #error Missing bundled VERSION. Rebuild Meshropractor.spec before compiling this installer.
+#endif
+#define BuildVersionFile FileOpen(BuildDir + "\_internal\VERSION")
+#if BuildVersionFile < 0
+  #error Cannot read the bundled VERSION from dist\Meshropractor\_internal.
+#endif
+#define BuildAppVersion Trim(FileRead(BuildVersionFile))
+#expr FileClose(BuildVersionFile)
+#if BuildAppVersion != MyAppVersion
+  #error Installer version differs from the bundled app VERSION. Rebuild Meshropractor.spec or correct /DMyAppVersion.
 #endif
 
 [Setup]
@@ -28,7 +51,9 @@ OutputDir={#SourcePath}dist\installer
 OutputBaseFilename=Meshropractor-Setup-{#MyAppVersion}-x64
 SetupIconFile={#SourcePath}assets\logo.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-Compression=lzma2/fast
+; GitHub Releases requires each asset to be smaller than 2 GiB.
+; Keep the complete CUDA/CAD/repair runtime and compress it for distribution.
+Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
@@ -51,3 +76,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: IsSilentUpdate
+
+[Code]
+function IsSilentUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:UPDATE|0}') = '1');
+end;

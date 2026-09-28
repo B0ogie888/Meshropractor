@@ -199,6 +199,8 @@ class MainWindow(ProjectController):
         self.ui.tbl_parts.cellClicked.connect(self.on_slicer_part_cell_clicked)
 
         self.ui.btn_heatmap.clicked.connect(self.generate_heatmap)
+        self.ui.btn_repair_models.clicked.connect(self.open_repair_wizard)
+        self.ui.ribbon_btns["Автоисправление"].clicked.connect(self.open_repair_wizard)
         self.ui.btn_clear_heat.clicked.connect(self.clear_heatmap)
         self.ui.chk_callouts.stateChanged.connect(self.toggle_callout_mode)
         self.ui.btn_clear_callouts.clicked.connect(self.clear_callouts)
@@ -210,6 +212,7 @@ class MainWindow(ProjectController):
                               "Импорт детали", "Выгрузить деталь", "Сохранить выбранные детали как", "Управление платформами"}
         from slicer_tools import TOOL_NAMES
         available_commands.update(TOOL_NAMES)
+        available_commands.add("Автоисправление")
         for name, button in self.ui.ribbon_btns.items():
             if name not in available_commands:
                 button.setEnabled(False)
@@ -224,6 +227,8 @@ class MainWindow(ProjectController):
         from window_snap import enable_snap
         enable_snap(self)
         QApplication.instance().installEventFilter(self)
+        from app_updater import UpdateController
+        self.updater = UpdateController(self)
 
     def _apply_dark_titlebar(self, widget):
         """Включает DWM Dark Mode для системных заголовков Windows 10/11"""
@@ -1307,8 +1312,12 @@ class MainWindow(ProjectController):
         if self._busy(): return
         if self.cad_mesh is None or self.scan_mesh is None:
             return self.log("[!] Загрузите CAD и скан.")
+        if getattr(self, '_repair_checked_cad', None) is not self.cad_mesh:
+            return self.review_cad_before_heatmap()
         scan = self.scan_mesh.copy()
-        def ready(deviations):
+        def ready(result):
+            deviations, info = result
+            if info: self.log('[i] ' + info)
             self.heat_count += 1
             key = self.add_def_table_item(self.ui.tbl_heat, f"Карта {self.heat_count}", "Heatmap")
             self._render_heatmap(key, scan, deviations)
@@ -1317,7 +1326,7 @@ class MainWindow(ProjectController):
             self._set_table_visibility(self.ui.tbl_cad, False)
             self._set_table_visibility(self.ui.tbl_scan, False)
             self.mark_dirty()
-        self.start_job(FunctionWorker(compute_heatmap, self.cad_mesh.copy(), scan), ready)
+        self.start_job(FunctionWorker(compute_heatmap, self.cad_mesh.copy(), scan, return_info=True), ready)
 
     def update_heatmap_limit(self):
         if not getattr(self.ui, 'plotter', None): return
@@ -1528,6 +1537,7 @@ class MainWindow(ProjectController):
 
     def clear_project_data(self):
         """Очищает память и ОБЕ 3D-сцены для старта нового проекта"""
+        self._repair_checked_cad = None
         if hasattr(self, 'workspace_tools'): self.workspace_tools.clear()
         if hasattr(self.ui, "section_panel"):
             self.ui.section_panel.clear()
@@ -1558,7 +1568,7 @@ class MainWindow(ProjectController):
         # Безопасная очистка сцены предеформации
         if getattr(self.ui, 'plotter', None):
             self.ui.plotter.clear()
-            self.ui.plotter.add_axes()
+            self.ui.plotter.hide_axes()
 
         # Безопасная очистка сцены слайсера
         if getattr(self.ui, 'slicer_plotter', None):
@@ -1996,6 +2006,10 @@ class MainWindow(ProjectController):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    from app_version import APP_VERSION
+    app.setApplicationName('Meshropractor')
+    app.setOrganizationName('MeshropractorTeam')
+    app.setApplicationVersion(APP_VERSION)
 
     # 1. Отвязываем Qt от светлой темы Windows
     app.setStyle("Fusion")
@@ -2045,5 +2059,6 @@ if __name__ == "__main__":
 
     window.show()
     splash.finish(window)
+    window.updater.start()
 
     sys.exit(app.exec())

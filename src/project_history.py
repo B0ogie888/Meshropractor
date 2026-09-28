@@ -8,7 +8,8 @@ import trimesh
 from PySide6.QtCore import QTimer
 
 
-def digest(value):
+def digest(value, mesh_cache=None):
+    mesh_cache = {} if mesh_cache is None else mesh_cache
     hasher = hashlib.sha256()
     def visit(item):
         if isinstance(item, np.ndarray):
@@ -16,7 +17,12 @@ def digest(value):
             hasher.update(str((array.dtype.str, array.shape)).encode())
             if array.size: hasher.update(memoryview(array).cast('B'))
         elif isinstance(item, trimesh.Trimesh):
-            visit(item.vertices); visit(item.faces); visit(item.metadata)
+            cached = mesh_cache.get(id(item))
+            if cached is None or cached[0] is not item:
+                cached = (item, digest((item.vertices, item.faces, item.metadata)))
+                mesh_cache[id(item)] = cached
+            hasher.update(b'mesh:')
+            hasher.update(cached[1].encode())
         elif isinstance(item, dict):
             hasher.update(b'{')
             for key in sorted(item):
@@ -41,10 +47,12 @@ class ProjectHistory:
         self.index = -1
         self.saved = None
         self.max_steps, self.max_bytes = max_steps, max_bytes
+        self._mesh_keys = {}
 
     def reset(self, state, saved=True):
         self.entries = []
         self.index = -1
+        self._mesh_keys.clear()
         self.push(state, "Начальное состояние")
         self.saved = self.key if saved else None
 
@@ -57,7 +65,10 @@ class ProjectHistory:
         return self.key != self.saved
 
     def push(self, state, label="Изменение проекта"):
-        key = digest(state)
+        # Previously retained snapshots are immutable. Hash only incoming meshes;
+        # do not reread every historical vertex/face array on a display edit.
+        cache = dict(self._mesh_keys)
+        key = digest(state, cache)
         if key == self.key:
             return False
         del self.entries[self.index + 1:]
@@ -68,15 +79,17 @@ class ProjectHistory:
             for record in previous.models + previous.parts:
                 if id(record['mesh']) in seen: continue
                 seen.add(id(record['mesh']))
-                pool[digest(record['mesh'])] = record['mesh']
+                pool[cache[id(record['mesh'])][1]] = record['mesh']
         for record in state.models + state.parts:
-            mesh_key = digest(record['mesh'])
+            mesh_key = cache[id(record['mesh'])][1]
             record['mesh'] = pool.setdefault(mesh_key, record['mesh'])
         self.entries.append((key, state, label))
         self.index = len(self.entries) - 1
         while len(self.entries) > 2 and (len(self.entries) > self.max_steps + 1 or self.bytes_used() > self.max_bytes):
             del self.entries[0]
             self.index -= 1
+        self._mesh_keys = {id(record['mesh']): cache[id(record['mesh'])]
+                           for _, snapshot, _ in self.entries for record in snapshot.models + snapshot.parts}
         return True
 
     def bytes_used(self):

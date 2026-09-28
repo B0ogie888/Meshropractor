@@ -33,6 +33,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         self._after_save = None
         self._job_callback = None
         self._job_completed = False
+        self._job_next = None
         self.pick_mode = None
         self._job_previous_enabled = []
         self._pickability = {}
@@ -94,6 +95,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                     self.ui.chk_preview_pts, self.ui.chk_show_vectors, self.ui.chk_callouts,
                     self.ui.btn_clear_callouts, self.ui.section_panel]
         controls += list(self.ui.ribbon_btns.values()) + list(self.ui.position_buttons.values())
+        controls.append(self.ui.btn_repair_models)
         if hasattr(self.ui, 'surface_toolbar'): controls.append(self.ui.surface_toolbar)
         controls.append(self.ui.measurement_panel)
         if hasattr(self, 'workspace_tools') and self.workspace_tools.supports.panel:
@@ -109,6 +111,9 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         result_signal = worker.result if isinstance(worker, FunctionWorker) else worker.finished_signal
         result_signal.connect(self._receive_job_result)
         worker.error.connect(self._receive_job_error)
+        if isinstance(worker, FunctionWorker):
+            worker.progress.connect(self.ui.status_label.setText)
+            worker.progress.connect(self.log)
         worker.finished.connect(self._finish_job)
         if hasattr(worker, "log_signal"):
             worker.log_signal.connect(self.log)
@@ -137,6 +142,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             return
         worker = self._job
         completed = self._job_completed
+        next_job, self._job_next = getattr(self, '_job_next', None), None
         self._job = None
         if hasattr(self, 'workspace_tools'): self.workspace_tools.cancel_button.hide()
         self._job_callback = None
@@ -164,6 +170,9 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             QTimer.singleShot(0, self.close)
         elif continuation and completed:
             QTimer.singleShot(0, continuation)
+        elif next_job and completed:
+            generation = self._generation
+            QTimer.singleShot(0, lambda: next_job() if self._generation == generation else None)
 
     def cancel_def(self):
         self.cancel_current_job()
@@ -181,6 +190,10 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             self.log("[i] Запрошена безопасная отмена. Ожидается завершение текущего шага.")
 
     def closeEvent(self, event):
+        updater = getattr(self, 'updater', None)
+        if updater and not updater.allow_close():
+            event.ignore()
+            return
         session = getattr(self, '_transform_session', None)
         if session is not None:
             session.dialog.reject()
@@ -191,15 +204,20 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             if not (isinstance(self._job, FunctionWorker) and self._job.function is save_project):
                 self.cancel_current_job()
             return
-        if not self._confirm_discard(self.close):
+        if not getattr(self, '_update_exit', False) and not self._confirm_discard(self.close):
             event.ignore()
             return
         self._history_timer.stop()
         if hasattr(self, 'workspace_tools') and self.workspace_tools.cube:
             self.workspace_tools.cube.dispose()
+        if getattr(self.ui, 'def_cube', None):
+            self.ui.def_cube.dispose()
         for plotter in (self.ui.plotter, self.ui.slicer_plotter):
             if plotter is not None:
+                performance = getattr(plotter, '_viewport_performance', None)
+                if performance: performance.dispose()
                 plotter.close()
+        if updater: updater.on_closed()
         event.accept()
 
     def _confirm_discard(self, continuation):
@@ -469,10 +487,38 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         if not path: return
         precision = self._step_import_precision(path)
         if precision is None: return
+        from mesh_repair import request_repair
+        options = request_repair(self, 'Part')
+        if options is None: return
         index = self.ui.scene_tabs.currentIndex()
         platforms = [p for p in self.platforms if p["is_default"]]
         platform = platforms[index - 1]["name"] if 0 < index <= len(platforms) else None
-        self.start_job(FunctionWorker(load_mesh, path, *precision), lambda mesh: self._append_slicer_part(mesh, os.path.basename(path), platform))
+        if options is False:
+            self.start_job(FunctionWorker(load_mesh, path, *precision),
+                           lambda mesh: self._append_slicer_part(mesh, os.path.basename(path), platform))
+            self.ui.status_label.setText('Загрузка без диагностики и лечения…')
+            return
+        from mesh_repair import load_with_repair
+        def ready(result):
+            source, repaired, report = result
+            self._job_next = lambda: self._review_slicer_import(source, repaired, report, path, platform)
+        self.start_job(FunctionWorker(load_with_repair, path, *precision, 'Part', options, with_progress=True), ready)
+
+    def _review_slicer_import(self, source, repaired, report, path, platform):
+        from mesh_repair import choose_repair
+        decision = choose_repair(self, report) if report['defects'] or report['changed'] else 'keep'
+        if decision == 'cancel': return
+        self._append_slicer_part(source, os.path.basename(path), platform)
+        if decision == 'apply':
+            # Keep an undo state with the original imported part.
+            self.flush_history()
+            part = self.slicer_parts[-1]
+            part['mesh'] = repaired
+            part['mesh_pv'] = self.trimesh_to_pyvista(repaired)
+            self.ui.slicer_plotter.actors[part['actor_name']].mapper.dataset = part['mesh_pv']
+            self.ui.slicer_plotter.render()
+            self.mark_dirty()
+            self.flush_history()
 
     def _step_import_precision(self, path):
         if not path.lower().endswith((".step", ".stp")):
@@ -488,6 +534,59 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
     def load_cad(self):
         self._import_model("CAD")
 
+    def open_repair_wizard(self):
+        if self._busy(): return
+        from repair_wizard import RepairWizard, repair_targets
+        if not repair_targets(self):
+            self.log('Сначала загрузите модель в слайсер или предеформацию.')
+            return
+        dialog = RepairWizard(self)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def apply_wizard_repair(self, target, source, repaired):
+        """Replace only the chosen mesh, preserving display style and undo history."""
+        if self._busy(): return
+        scope, key = target['scope'], target['key']
+        if scope == 'part' and self.slicer_parts[key]['mesh'] is not source:
+            raise ValueError('Модель изменилась. Повторите диагностику.')
+        if scope == 'model' and self.scene_models[key]['mesh'] is not source:
+            raise ValueError('Модель изменилась. Повторите диагностику.')
+        self.flush_history()
+        if scope == 'part':
+            part = self.slicer_parts[key]
+            self.replace_slicer_mesh(key, repaired)
+            for group in part.get('supports', []):
+                group['surface_faces'] = []
+            self.update_info_combobox()
+            self.refresh_scene_visibility()
+            self.ui.section_panel.apply()
+        elif scope == 'support':
+            row, group_id = key
+            group = next(g for g in self.slicer_parts[row]['supports'] if g['id'] == group_id)
+            from part_supports import remove_actors
+            remove_actors(self, [group])
+            group.update(vertices=repaired.vertices.copy(), faces=repaired.faces.copy())
+            self.refresh_scene_visibility()
+        else:
+            self.scene_models[key]['mesh'] = repaired
+            actor = self.actors.get(key)
+            if actor: actor.mapper.dataset = self.trimesh_to_pyvista(repaired)
+            if source is self.cad_mesh:
+                self.cad_mesh = repaired; self._repair_checked_cad = repaired
+                self.clear_heatmap()
+            if source is self.scan_mesh:
+                self.scan_mesh = repaired
+                self.clear_heatmap()
+            if source is self.result_mesh: self.result_mesh = repaired
+            self.clear_picks()
+            self.ui.chk_show_vectors.setChecked(False)
+            self.ui.chk_preview_pts.setChecked(False)
+            if self.ui.plotter: self.ui.plotter.render()
+        self.mark_dirty()
+        self.flush_history('Исправить модель')
+        self.log('Исправление применено к выбранной модели. Ctrl+Z — отмена.')
+
     def load_scan(self):
         self._import_model("Scan")
 
@@ -498,18 +597,74 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         if not path: return
         precision = self._step_import_precision(path)
         if precision is None: return
+        from mesh_repair import request_repair
+        options = request_repair(self, kind)
+        if options is None: return
         def loaded(mesh):
             self.ui._ensure_def_plotter()
             self.clear_picks()
             self.ui.chk_show_vectors.setChecked(False)
             self.ui.chk_preview_pts.setChecked(False)
             table = self.ui.tbl_cad if kind == "CAD" else self.ui.tbl_scan
-            if kind == "CAD": self.cad_mesh = mesh
+            if kind == "CAD":
+                self.cad_mesh = mesh
+                self._repair_checked_cad = None
             else: self.scan_mesh = mesh
             key = self.add_def_table_item(table, os.path.basename(path), kind, clear_table=True)
             self.show_mesh(key, mesh)
+            self.scene_models[key]['name'] = os.path.basename(path)
             self.mark_dirty()
-        self.start_job(FunctionWorker(load_mesh, path, *precision), loaded)
+        if options is False:
+            self.start_job(FunctionWorker(load_mesh, path, *precision), loaded)
+            self.ui.status_label.setText('Загрузка без диагностики и лечения…')
+            return
+        from mesh_repair import load_with_repair, choose_repair
+        def review(result):
+            source, repaired, report = result
+            decision = choose_repair(self, report) if report['defects'] or report['changed'] else 'keep'
+            if decision == 'cancel': return
+            loaded(source)
+            if decision == 'apply':
+                self.flush_history()
+                loaded(repaired)
+                self.flush_history()
+            if kind == 'CAD': self._repair_checked_cad = self.cad_mesh
+            self.log(f"[i] Проверка {kind}: открытых рёбер {report['after' if decision == 'apply' else 'before']['boundary']}. "
+                     + ('Исправление применено.' if decision == 'apply' else 'Исходная сетка сохранена.'))
+        def ready(result):
+            self._job_next = lambda: review(result)
+        self.start_job(FunctionWorker(load_with_repair, path, *precision, kind, options, with_progress=True), ready)
+
+    def review_cad_before_heatmap(self):
+        """Review old project meshes too; queue the next job after worker cleanup."""
+        from mesh_repair import prepare_repair, choose_repair, request_repair
+        source = self.cad_mesh
+        options = request_repair(self, 'CAD', importing=False)
+        if options is None: return
+        if options is False:
+            self._repair_checked_cad = source
+            self.generate_heatmap()
+            return
+        def review(result):
+            if self.cad_mesh is not source: return
+            repaired, report = result
+            decision = choose_repair(self, report) if report['defects'] or report['changed'] else 'keep'
+            if decision == 'cancel': return
+            if decision == 'apply':
+                self.flush_history()
+                self.cad_mesh = repaired
+                for key, record in self.scene_models.items():
+                    if record.get('mesh') is source and record.get('kind') == 'CAD':
+                        record['mesh'] = repaired
+                        if self.actors.get(key): self.actors[key].mapper.dataset = self.trimesh_to_pyvista(repaired)
+                self.clear_heatmap()
+                self.mark_dirty()
+                self.flush_history()
+            self._repair_checked_cad = self.cad_mesh
+            self.generate_heatmap()
+        def ready(result):
+            self._job_next = lambda: review(result)
+        self.start_job(FunctionWorker(prepare_repair, source, 'CAD', **options, with_progress=True), ready)
 
     def update_alignment_quality(self):
         quality = self.scan_mesh.metadata.get("alignment", {}) if self.scan_mesh is not None else {}

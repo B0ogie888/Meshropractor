@@ -108,7 +108,7 @@ def contact_grid(record, faces, world, params):
         group, pending = {seed}, [seed]
         remaining.remove(seed)
         while pending:
-            for neighbor in topology.neighbors[pending.pop()]:
+            for neighbor in topology.neighbor_ids(pending.pop()):
                 if neighbor in remaining:
                     remaining.remove(neighbor)
                     group.add(neighbor)

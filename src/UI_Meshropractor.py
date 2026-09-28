@@ -369,7 +369,9 @@ class Ui_MainWindow(object):
         """Лениво создает VTK-сцену слайсера"""
         if self.slicer_plotter is not None:
             return
-        self.slicer_plotter = QtInteractor(self._slicer_center_container)
+        self.slicer_plotter = QtInteractor(self._slicer_center_container, auto_update=False)
+        from viewport_performance import ViewportPerformance
+        self.slicer_plotter._viewport_performance = ViewportPerformance(self.slicer_plotter)
         self.slicer_plotter.setCursor(Qt.ArrowCursor)
         self.slicer_plotter.set_background('white')
         self.slicer_plotter.add_axes()
@@ -381,12 +383,17 @@ class Ui_MainWindow(object):
         """Лениво создает VTK-сцену предеформации"""
         if self.plotter is not None:
             return
-        self.plotter = QtInteractor(self._def_center_container)
+        self.plotter = QtInteractor(self._def_center_container, auto_update=False)
+        from viewport_performance import ViewportPerformance
+        self.plotter._viewport_performance = ViewportPerformance(self.plotter)
         self.plotter.setCursor(Qt.ArrowCursor)
         self.plotter.set_background('white')
         self.plotter.add_axes()
         self.plotter.winId()  # Заставляем Qt выделить память до скрытия
         self._def_center_layout.addWidget(self.plotter)
+        from orientation_cube import OrientationCube
+        self.def_cube = OrientationCube(self.plotter)
+        self.plotter.hide_axes()
 
     def _on_stack_current_changed(self, index):
         """Триггерит создание сцен при реальном переходе пользователя на вкладку"""
@@ -455,6 +462,10 @@ class Ui_MainWindow(object):
         grid.addWidget(self.btn_donate, 1, 1)  # <-- Ставим её в правый нижний угол
 
         main_layout.addLayout(grid)
+        from app_version import APP_VERSION
+        self.btn_check_updates = QPushButton(f"Проверить обновления · {APP_VERSION}")
+        self.btn_check_updates.setCursor(Qt.PointingHandCursor)
+        main_layout.addWidget(self.btn_check_updates, alignment=Qt.AlignHCenter)
         return page
 
     def create_big_button(self, icon_text, title):
@@ -1093,6 +1104,8 @@ class Ui_MainWindow(object):
         fl.addWidget(QLabel("Фактическая сетка (Скан):"), 1, 0)
         self.btn_load_scan = QPushButton("📁 Загрузить Скан (.stl)")
         fl.addWidget(self.btn_load_scan, 1, 1)
+        self.btn_repair_models = QPushButton("✚ Мастер исправлений моделей")
+        fl.addWidget(self.btn_repair_models, 2, 0, 1, 2)
         l.addWidget(group_files)
 
         # 2. Параметры поиска

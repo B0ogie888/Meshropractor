@@ -32,10 +32,28 @@ class GeometryTests(unittest.TestCase):
         self.assertTrue((compute_heatmap(sphere, expanded) > 0).all())
         self.assertTrue((compute_heatmap(sphere, shrunken) < 0).all())
 
-    def test_heatmap_rejects_open_cad(self):
-        mesh = trimesh.creation.box()
-        mesh.update_faces(np.arange(len(mesh.faces) - 1))
-        with self.assertRaisesRegex(ValueError, "замкнутый"): compute_heatmap(mesh, trimesh.creation.box())
+    def test_heatmap_open_cad_uses_surface_normal_sign(self):
+        mesh = trimesh.Trimesh(vertices=[[0,0,0], [2,0,0], [0,2,0]], faces=[[0,1,2]], process=False)
+        scan = trimesh.Trimesh(vertices=[[.2,.2,.1], [.2,.2,-.2], [.3,.2,0]], faces=[[0,1,2]], process=False)
+        values, info = compute_heatmap(mesh, scan, return_info=True)
+        np.testing.assert_allclose(values, [.1, -.2, 0], atol=1e-6)
+        self.assertIn('нормалью', info)
+
+    def test_heatmap_welds_cad_seams_and_accepts_open_scan(self):
+        solid = trimesh.creation.box()
+        vertices = solid.triangles.reshape(-1, 3).copy()
+        faces = np.arange(len(vertices)).reshape(-1, 3)
+        cad = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        # Duplicate export facets must not turn the boundary non-manifold.
+        cad.faces = np.vstack([cad.faces, cad.faces[:1]])
+        scan = trimesh.Trimesh(vertices=[[.6, 0, 0], [.4, 0, 0], [.5, .1, 0]],
+                               faces=[[0, 1, 2]], process=False)
+        before_faces = cad.faces.copy()
+        self.assertFalse(cad.is_watertight)
+        self.assertFalse(scan.is_watertight)
+        np.testing.assert_allclose(compute_heatmap(cad, scan), [.1, -.1, 0], atol=1e-6)
+        np.testing.assert_array_equal(cad.vertices, vertices)
+        np.testing.assert_array_equal(cad.faces, before_faces)
 
     def test_raycast_measures_known_offset(self):
         source = sample_surface(as_pv(trimesh.creation.box(extents=[10, 10, 10])), 500)

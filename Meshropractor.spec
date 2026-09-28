@@ -11,7 +11,11 @@ os.environ['PATH'] = os.pathsep.join((str(Path(sys.executable).parent), sys.base
                                     str(windows / 'System32'), str(windows)))
 from PyInstaller.utils.hooks import collect_all, collect_delvewheel_libs_directory
 
-datas = [('assets', 'assets')]
+datas = [('assets', 'assets'), ('VERSION', '.')]
+repair_engine = Path('dist/MeshRepairEngine')
+if not (repair_engine / 'MeshRepairEngine.exe').is_file():
+    raise RuntimeError('Build the repair helper first: python -m PyInstaller --noconfirm RepairEngine.spec')
+datas.append((str(repair_engine), 'repair_engine'))
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('OCP')
@@ -24,6 +28,8 @@ tmp_ret = collect_all('open3d')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pyvista')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('rtree')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
@@ -35,7 +41,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pymeshlab', 'pymeshfix'],
     noarchive=False,
     optimize=0,
 )

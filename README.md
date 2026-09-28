@@ -25,6 +25,13 @@ For a packaged Windows build, use `Meshropractor-Setup-0.2.5-x64.exe` or copy th
 not required. For PyInstaller and Inno Setup packaging, see
 [Windows build instructions (RU)](docs/BUILD_WINDOWS.md). Source setup follows below.
 
+On startup, the application checks this repository's stable GitHub releases for a newer
+Windows x64 installer. You choose whether to download it, with progress and cancellation,
+then separately confirm installation. Unsaved work can be saved before closing. After
+confirmation, installation runs automatically with visible progress and the normal Windows
+administrator prompt, then restarts Meshropractor without restarting Windows. Release versions
+come from the root `VERSION` file; publication instructions are in the build guide.
+
 Tested on Windows with Python 3.12. Direct dependencies are pinned in `requirements.txt`.
 NVIDIA GPU acceleration is optional; training falls back to CPU. Open3D raycasting
 runs on CPU in batches regardless of the PyTorch training device.
@@ -57,6 +64,41 @@ python src/Meshropractor.py
 
 ## Workflow
 
+The **Repair wizard** is available from the slicer’s Repair tab and beside CAD/scan
+import in Predeformation. Its dropdown includes every loaded part, child support group,
+CAD, scan and result. Full analysis reports open boundaries, nonmanifold edges/vertices,
+duplicate/degenerate faces, fragments, coplanar area overlaps and transverse intersections.
+Counts use our own geometric criteria and need not match Magics.
+
+Full repair runs in a cancellable local helper process, with optional quadric reduction
+of overly dense meshes (about 400,000 faces by default). The result is independently
+rechecked and compared with the original in both directions using every vertex plus
+area-sampled surface points. Application is blocked if the measured distance exceeds
+the configured tolerance (default 0.05 mm); this is a sampled estimate, not a certified
+Hausdorff bound. Review/export the report and repaired copy before applying. Full repair
+can close intentionally open surfaces and requires confirmation. Original files remain
+unchanged; applying to one model supports undo. Full analysis of a multi-million-face STL
+can take over ten minutes. See [repair details](docs/MESH_REPAIR.md) and the
+[independent helper source/license](licenses/repair-engine/README.md).
+
+Before loading, choose whether to run diagnostics and prepare repair, or import directly
+without either step. Repair settings offer one to three passes and a hole diameter limit
+(0.1 mm by default). Progress appears in the status bar/log; cancellation is checked
+between stages and boundary components. Review the before/after counts before applying,
+keeping the original mesh or canceling import. Repair welds coincident vertices
+at 0.000001 mm precision and removes duplicate/degenerate faces. CAD and slicer parts
+also receive caps for small planar convex holes: passes handle up to 4, 12 and 32 boundary
+edges within the chosen diameter, stopping early when the mesh becomes closed;
+scan boundaries are preserved. Larger/complex gaps, incorrect normals and self-intersections
+are not automatically repaired by this mode. The source file is untouched and repair is
+a separate Undo/Redo step. CAD from existing projects is reviewed before a deviation map
+unless already reviewed in the session. A prompt precedes that work too: skip repair to
+continue the map immediately, or cancel the calculation.
+
+While rotating large models (100,000 faces or more), edge overlays are temporarily hidden
+and restored on release. Geometry is not decimated. Static scenes render on changes and
+the view cube caches its image. See [performance measurements (RU)](docs/PERFORMANCE.md).
+
 1. Create a deformation project. CAD accepts STL/STEP/STP; scans accept STL.
    STEP units are converted to mm, with selectable tessellation deflection (default
    0.05 mm) and angular deflection in degrees (default about 14.324°), in the same dialog.
@@ -67,7 +109,10 @@ python src/Meshropractor.py
    minimum scan area fraction; results include inlier RMSE and whole-sample P95.
    Medium/long searches test 24 PCA orientations plus a local-feature candidate. Symmetric
    orientation ambiguity is reported; markers can resolve it. Cancellation is available.
-3. Generate a signed deviation map; the CAD must be closed. Select a map in the
+3. Generate a deviation map. Closed CAD uses inside/outside signs; open CAD uses
+   closest-surface distance signed by the CAD face normal, with a notice in the log.
+   This local sign can be ambiguous near gaps and sharp edges. Scans may be open.
+   Select a map in the
    table before placing measurement callouts.
 4. Choose the network, surface sample count, deviation search limit and minimum
    coverage. Sampling affects training; disabling sampling uses the CAD vertices.
@@ -110,7 +155,8 @@ braces, perimeter contacts, truncated cones and branches. Groups can be hidden o
 Choose None to keep the region without support geometry. Existing detached support parts
 in older projects remain detached because those files contain no reliable parent link.
 
-The translucent view cube aligns the camera when a face is clicked; double-click restores
+The view cube in both workspaces uses pale faces and thin edges without a rectangular
+panel covering the viewport. Clicking a face aligns the camera; double-click restores
 an isometric view. The platform becomes 88% transparent with the camera below Z=0.
 Measurements cover point distances and XYZ deltas, distance to a face's extended plane
 or to the closest point of a part, parallel plane distances, three-point circles and

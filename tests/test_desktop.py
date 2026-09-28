@@ -10,7 +10,7 @@ import tempfile
 import numpy as np
 import trimesh
 import pyvista as pv
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QThread, Qt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -36,6 +36,7 @@ class TestPlotter:
         self.actors.pop(key, None)
     def clear(self): self.actors.clear(); self.scalar_bars.clear()
     def add_axes(self): pass
+    def hide_axes(self): pass
     def reset_camera(self): pass
     def reset_camera_clipping_range(self): pass
     def render(self): pass
@@ -45,6 +46,9 @@ class TestPlotter:
 
 class DesktopTests(unittest.TestCase):
     def setUp(self):
+        repair_prompt = patch('mesh_repair.request_repair', return_value=dict(passes=3, max_hole_mm=.1))
+        repair_prompt.start()
+        self.addCleanup(repair_prompt.stop)
         self.window = MainWindow()
         self.window.ui._ensure_def_plotter = lambda: setattr(self.window.ui, 'plotter', self.window.ui.plotter or TestPlotter())
         self.window.ui._ensure_slicer_plotter = lambda: setattr(self.window.ui, 'slicer_plotter', self.window.ui.slicer_plotter or TestPlotter())
@@ -59,8 +63,11 @@ class DesktopTests(unittest.TestCase):
 
     def wait_for_job(self):
         deadline = time.monotonic() + 10
-        while self.window._job is not None and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
             APP.processEvents()
+            if self.window._job is None:
+                APP.processEvents()  # queued repair review / next calculation
+                if self.window._job is None: return
             time.sleep(0.005)
         self.assertIsNone(self.window._job, "worker did not finish")
 
@@ -77,6 +84,103 @@ class DesktopTests(unittest.TestCase):
         self.window.start_job(FunctionWorker(lambda: 12), lambda value: received.append((value, QThread.currentThread() == APP.thread())))
         self.wait_for_job()
         self.assertEqual(received, [(12, True)])
+
+    def test_heatmap_open_cad_finishes_and_adds_map(self):
+        cad = trimesh.creation.box()
+        cad.update_faces(np.arange(len(cad.faces) - 1))
+        scan = cad.copy(); scan.apply_scale(1.1)
+        self.window.restore_project(ProjectState(models=[
+            dict(key='CAD_0', kind='CAD', name='CAD', mesh=cad, style={}),
+            dict(key='Scan_0', kind='Scan', name='Scan', mesh=scan, style={})]))
+        messages = []
+        self.window.log = messages.append
+        with patch('mesh_repair.choose_repair', return_value='keep'):
+            self.window.generate_heatmap()
+            self.wait_for_job()
+        maps = [r for k, r in self.window.scene_models.items() if k.startswith('Heatmap')]
+        self.assertEqual(len(maps), 1)
+        self.assertTrue(any('нормалью' in m for m in messages))
+        self.assertTrue(self.window.ui.btn_run_icp.isEnabled())
+
+    def test_repair_before_heatmap_applies_and_undo_restores_original(self):
+        cad = trimesh.creation.box(extents=[.02]*3)
+        cad.update_faces(np.arange(11))
+        self.window.restore_project(ProjectState(models=[
+            dict(key='CAD_0', kind='CAD', name='CAD', mesh=cad, style={}),
+            dict(key='Scan_0', kind='Scan', name='Scan', mesh=cad.copy(), style={})]))
+        self.window.reset_history()
+        with patch('mesh_repair.choose_repair', return_value='apply'):
+            self.window.generate_heatmap()
+            self.wait_for_job()
+        self.assertTrue(self.window.cad_mesh.is_watertight)
+        self.assertEqual(self.window.ui.tbl_heat.rowCount(), 1)
+        self.window.undo_action()  # map
+        self.window.undo_action()  # repair
+        self.assertFalse(self.window.cad_mesh.is_watertight)
+        self.assertEqual(len(self.window.cad_mesh.faces), 11)
+
+    def test_repair_review_cancel_does_not_build_map(self):
+        cad = trimesh.creation.box(); cad.update_faces(np.arange(11))
+        self.window.restore_project(ProjectState(models=[
+            dict(key='CAD_0', kind='CAD', name='CAD', mesh=cad, style={}),
+            dict(key='Scan_0', kind='Scan', name='Scan', mesh=cad.copy(), style={})]))
+        with patch('mesh_repair.choose_repair', return_value='cancel'):
+            self.window.generate_heatmap()
+            self.wait_for_job()
+        self.assertEqual(self.window.ui.tbl_heat.rowCount(), 0)
+        self.assertEqual(len(self.window.cad_mesh.faces), 11)
+
+    def test_repair_slicer_import_preserves_render_mesh_and_undo(self):
+        from mesh_repair import prepare_repair
+        cad = trimesh.creation.box(extents=[.02]*3); cad.update_faces(np.arange(11))
+        fixed, report = prepare_repair(cad, 'Part')
+        self.window.reset_history()
+        with patch('mesh_repair.choose_repair', return_value='apply'):
+            self.window._review_slicer_import(cad, fixed, report, 'test.stl', None)
+        self.assertEqual(self.window.slicer_parts[0]['mesh_pv'].n_cells, 12)
+        self.window.undo_action()
+        self.assertEqual(len(self.window.slicer_parts[0]['mesh'].faces), 11)
+
+    def test_repair_cad_import_applies_after_worker_and_can_undo(self):
+        cad = trimesh.creation.box(extents=[.02]*3); cad.update_faces(np.arange(11))
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / 'cad.stl'); cad.export(path)
+            with patch('project_controller.QFileDialog.getOpenFileName', return_value=(path, '')), \
+                    patch('mesh_repair.choose_repair', return_value='apply'):
+                self.window.load_cad()
+                self.wait_for_job()
+        self.assertTrue(self.window.cad_mesh.is_watertight)
+        self.window.undo_action()
+        self.assertFalse(self.window.cad_mesh.is_watertight)
+
+    def test_import_skip_does_not_analyze_or_prepare_repair(self):
+        with patch('mesh_repair.request_repair', return_value=False), \
+                patch('project_controller.QFileDialog.getOpenFileName', return_value=('cad.stl', '')), \
+                patch('project_controller.load_mesh', return_value=trimesh.creation.box()), \
+                patch('mesh_repair.prepare_repair') as repair:
+            self.window.load_cad()
+            self.wait_for_job()
+        repair.assert_not_called()
+        self.assertIsNotNone(self.window.cad_mesh)
+
+    def test_import_cancel_before_loading(self):
+        with patch('mesh_repair.request_repair', return_value=None), \
+                patch('project_controller.QFileDialog.getOpenFileName', return_value=('cad.stl', '')), \
+                patch('project_controller.load_mesh') as loader:
+            self.window.load_cad()
+        loader.assert_not_called()
+        self.assertIsNone(self.window._job)
+
+    def test_heatmap_skip_does_not_run_repair(self):
+        cad = trimesh.creation.box()
+        self.window.restore_project(ProjectState(models=[
+            dict(key='CAD_0', kind='CAD', name='CAD', mesh=cad, style={}),
+            dict(key='Scan_0', kind='Scan', name='Scan', mesh=cad.copy(), style={})]))
+        with patch('mesh_repair.request_repair', return_value=False), patch('mesh_repair.prepare_repair') as repair:
+            self.window.generate_heatmap()
+            self.wait_for_job()
+        repair.assert_not_called()
+        self.assertEqual(self.window.ui.tbl_heat.rowCount(), 1)
 
     def test_cancel_ignores_late_result_and_restores_controls(self):
         received = []
@@ -368,7 +472,7 @@ class DesktopTests(unittest.TestCase):
         dialog.linear.setValue(.03)
         self.assertAlmostEqual(dialog.values()[1], np.deg2rad(12))
         self.assertEqual(dialog.values()[0], .03)
-        with patch('import_dialog.StepImportDialog.exec', return_value=1), patch('import_dialog.StepImportDialog.values', return_value=(.03, np.deg2rad(12))), patch('project_controller.QFileDialog.getOpenFileName', return_value=('part.step', '')), patch('project_controller.load_mesh', return_value=trimesh.creation.box()) as loader:
+        with patch('import_dialog.StepImportDialog.exec', return_value=1), patch('import_dialog.StepImportDialog.values', return_value=(.03, np.deg2rad(12))), patch('project_controller.QFileDialog.getOpenFileName', return_value=('part.step', '')), patch('mesh_repair.load_mesh', return_value=trimesh.creation.box()) as loader:
             self.window.load_cad()
             self.wait_for_job()
             loader.assert_called_once_with('part.step', .03, np.deg2rad(12))
@@ -667,6 +771,48 @@ class DesktopTests(unittest.TestCase):
         self.assertTrue(all(not actor.GetVisibility() for name, actor in work.plotter.actors.items() if name.startswith('measurement_')))
         window.replace_slicer_mesh(0, trimesh.creation.box())
         self.assertEqual(panel.results.count(), 0)
+
+
+    def test_repair_wizard_lists_all_models_and_applies_one_part_with_undo(self):
+        from repair_wizard import RepairWizard
+        from mesh_diagnostics import diagnose_mesh
+        from part_supports import make_group
+        w=self.window
+        first=trimesh.creation.box(); first.update_faces(np.arange(11))
+        w._append_slicer_part(first, 'broken.stl')
+        w._append_slicer_part(trimesh.creation.box(), 'other.stl')
+        support=make_group(trimesh.creation.box(), [0], 'Блок')
+        w.slicer_parts[0]['supports']=[support]
+        w.flush_history()
+        original_other=w.slicer_parts[1]['mesh'].vertices.copy()
+        dialog=RepairWizard(w)
+        self.assertEqual(dialog.models.count(), 3)
+        dialog.show_diagnostics(diagnose_mesh(first))
+        repaired=trimesh.creation.box()
+        report=dict(before=dialog.before,after=diagnose_mesh(repaired),changed=True,acceptable=True)
+        dialog.show_repair((repaired,report))
+        with patch('repair_wizard.QMessageBox.question', return_value=QMessageBox.Yes):
+            dialog.apply_result()
+        self.assertTrue(w.slicer_parts[0]['mesh'].is_watertight)
+        self.assertEqual(w.slicer_parts[0]['supports'][0]['surface_faces'], [])
+        np.testing.assert_array_equal(w.slicer_parts[1]['mesh'].vertices,original_other)
+        dialog.close(); dialog.deleteLater()
+        w.travel_history(-1)
+        self.assertFalse(w.slicer_parts[0]['mesh'].is_watertight)
+        self.assertEqual(w.slicer_parts[0]['supports'][0]['surface_faces'], [0])
+
+    def test_repair_wizard_checks_selected_mesh_in_background(self):
+        from repair_wizard import RepairWizard
+        w=self.window
+        w._append_slicer_part(trimesh.creation.box(), 'healthy.stl')
+        dialog=RepairWizard(w)
+        dialog.analyze_model()
+        self.wait_for_job()
+        APP.processEvents()
+        self.assertTrue(dialog.before['clean'])
+        self.assertTrue(dialog.models.isEnabled())
+        self.assertFalse(dialog.apply.isEnabled())
+        dialog.close(); dialog.deleteLater()
 
 
 if __name__ == "__main__": unittest.main()

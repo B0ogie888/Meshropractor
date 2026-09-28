@@ -4,6 +4,7 @@ from pathlib import Path
 import traceback
 import numpy as np
 import trimesh
+import pyvista as pv
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QTimer, QPoint, QRect
 from PySide6.QtTest import QTest
@@ -102,6 +103,20 @@ def check():
         # Actual click on a projected face of the transparent cube.
         cube_widget = work.cube
         cube_widget.grab().save(str(output / 'workspace-view-cube.png'))
+        assert cube_widget.testAttribute(Qt.WA_NativeWindow), 'Cube must render above the native VTK window'
+        window.raise_()
+        window.activateWindow()
+        QTest.qWait(250)
+        def capture_cube(widget, name):
+            capture = widget.grab()
+            capture.save(str(output / name))
+            pixels = capture.toImage()
+            dark = sum(max(pixels.pixelColor(x, y).red(), pixels.pixelColor(x, y).green(),
+                           pixels.pixelColor(x, y).blue()) < 180
+                       for x in range(15, 120) for y in range(15, 120))
+            assert dark > 30, 'Cube edges were not painted'
+            assert not widget.mask().contains(QPoint(4, 4)), 'Rectangular background must not cover the scene'
+        capture_cube(cube_widget, 'workspace-cube-render.png')
         face = next((item for item in cube_widget.faces if item[1:] == (2, -1)), cube_widget.faces[-1])
         QTest.mouseClick(cube_widget, Qt.LeftButton, Qt.NoModifier, face[0].boundingRect().center().toPoint())
         direction = np.asarray(plotter.camera.position) - plotter.camera.focal_point
@@ -140,6 +155,23 @@ def check():
             get_style.restype = ctypes.c_ssize_t
             style = get_style(int(window.winId()), -16)
             assert style & 0x40000 and style & 0x10000, 'Native resize/maximize styles missing'
+        window.ui.stack.setCurrentWidget(window.ui.page_predef)
+        window.ui._ensure_def_plotter()
+        window.ui.plotter.add_mesh(pv.Cube())
+        window.ui.plotter.reset_camera()
+        QTest.qWait(250)
+        def_cube = window.ui.def_cube
+        capture_cube(def_cube, 'predef-cube-render.png')
+        face = def_cube.faces[-1]
+        QTest.mouseClick(def_cube, Qt.LeftButton, Qt.NoModifier, face[0].boundingRect().center().toPoint())
+        direction = np.asarray(window.ui.plotter.camera.position) - window.ui.plotter.camera.focal_point
+        assert abs(direction[face[1]]) / np.linalg.norm(direction) > .99
+        window.ui.stack.setCurrentWidget(window.ui.page_slicer)
+        QTest.qWait(250)
+        capture_cube(cube_widget, 'workspace-cube-after-tab-switch.png')
+        if '--inspect' in sys.argv:
+            window.ui.stack.setCurrentWidget(window.ui.page_predef)
+            QTest.qWait(60000)
         print('WORKSPACE_SMOKE_OK')
     except Exception:
         failed.append(traceback.format_exc())

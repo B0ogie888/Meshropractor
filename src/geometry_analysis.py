@@ -44,18 +44,42 @@ def validate_deformation(source, result):
         raise ValueError("Результат содержит самопересечения. Проверьте исходную сетку и коэффициент.")
 
 
-def compute_heatmap(cad_mesh, scan_mesh):
+def compute_heatmap(cad_mesh, scan_mesh, return_info=False):
     validate_mesh(cad_mesh)
     validate_mesh(scan_mesh)
-    if not cad_mesh.is_watertight:
-        raise ValueError("Для знаковой карты нужен замкнутый CAD без отверстий. Исправьте сетку CAD.")
+    # Imported face seams / STL triangle soups are not topological holes.
+    # Work on a private geometry-only copy: visual normals can prevent welding,
+    # and changing the original indices would invalidate surface selections.
+    cad_mesh = trimesh.Trimesh(vertices=cad_mesh.vertices.copy(),
+                               faces=cad_mesh.faces.copy(), process=False)
+    cad_mesh.merge_vertices(digits_vertex=8, merge_tex=True, merge_norm=True)
+    cad_mesh.update_faces(cad_mesh.nondegenerate_faces(height=1e-12))
+    cad_mesh.update_faces(cad_mesh.unique_faces())
+    cad_mesh.remove_unreferenced_vertices()
+    closed = cad_mesh.is_watertight
+    info = ''
+    if not closed:
+        counts = np.bincount(cad_mesh.edges_unique_inverse)
+        info = (f"CAD: открытых рёбер {np.count_nonzero(counts == 1)}, "
+                f"неманифолдных рёбер {np.count_nonzero(counts > 2)}. "
+                "Карта построена по ближайшей поверхности; знак задан нормалью грани CAD, "
+                "а не положением внутри/снаружи тела. Возле разрывов и острых рёбер знак неоднозначен.")
+    center = cad_mesh.bounds.mean(axis=0)
     geometry = o3d.t.geometry.TriangleMesh(
-        o3d.core.Tensor(np.asarray(cad_mesh.vertices, dtype=np.float32)),
+        o3d.core.Tensor(np.asarray(cad_mesh.vertices - center, dtype=np.float32)),
         o3d.core.Tensor(np.asarray(cad_mesh.faces, dtype=np.int32)))
     scene = o3d.t.geometry.RaycastingScene()
     scene.add_triangles(geometry)
     chunks = []
     for start in range(0, len(scan_mesh.vertices), 100_000):
-        points = o3d.core.Tensor(np.asarray(scan_mesh.vertices[start:start + 100_000], dtype=np.float32))
-        chunks.append(scene.compute_signed_distance(points).numpy())
-    return np.concatenate(chunks)
+        points = o3d.core.Tensor(np.asarray(scan_mesh.vertices[start:start + 100_000] - center, dtype=np.float32))
+        if closed:
+            chunks.append(scene.compute_signed_distance(points).numpy())
+        else:
+            nearest = scene.compute_closest_points(points)
+            delta = points.numpy() - nearest['points'].numpy()
+            normals = nearest['primitive_normals'].numpy()
+            sign = np.where(np.einsum('ij,ij->i', delta, normals) < 0, -1., 1.)
+            chunks.append(np.linalg.norm(delta, axis=1) * sign)
+    values = np.concatenate(chunks)
+    return (values, info) if return_info else values

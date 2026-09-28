@@ -11,3 +11,6 @@ matplotlib==3.10.8
 Pillow==12.2.0
 torch==2.5.1
 cadquery-ocp-novtk==7.9.3.1.1
+rtree==1.4.1
+# Used by the independent repair command-line engine; see licenses/repair-engine.
+pymeshfix==0.18.1
