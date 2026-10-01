@@ -111,6 +111,8 @@ class Ui_MainWindow(object):
             "Result": "#2ca02c"
         }
         self.ribbon_btns = {}
+        from display_settings import load_preferences
+        self.display_preferences = load_preferences(main_window.settings)
 
         # === БАЗОВЫЕ НАСТРОЙКИ ОКНА ===
         main_window.setWindowTitle("Meshropractor")
@@ -370,11 +372,12 @@ class Ui_MainWindow(object):
         if self.slicer_plotter is not None:
             return
         self.slicer_plotter = QtInteractor(self._slicer_center_container, auto_update=False)
+        self.slicer_plotter.setAcceptDrops(True)
         from viewport_performance import ViewportPerformance
         self.slicer_plotter._viewport_performance = ViewportPerformance(self.slicer_plotter)
         self.slicer_plotter.setCursor(Qt.ArrowCursor)
-        self.slicer_plotter.set_background('white')
-        self.slicer_plotter.add_axes()
+        from display_settings import apply_to_plotter
+        apply_to_plotter(self.slicer_plotter, self.display_preferences, render=False)
         self.slicer_plotter.winId()  # Заставляем Qt выделить память до скрытия
         self._slicer_center_layout.insertWidget(1 if hasattr(self, 'surface_toolbar') else 0, self.slicer_plotter)
         if hasattr(self, 'workspace_tools'): self.workspace_tools.attach(self.slicer_plotter)
@@ -384,11 +387,12 @@ class Ui_MainWindow(object):
         if self.plotter is not None:
             return
         self.plotter = QtInteractor(self._def_center_container, auto_update=False)
+        self.plotter.setAcceptDrops(True)
         from viewport_performance import ViewportPerformance
         self.plotter._viewport_performance = ViewportPerformance(self.plotter)
         self.plotter.setCursor(Qt.ArrowCursor)
-        self.plotter.set_background('white')
-        self.plotter.add_axes()
+        from display_settings import apply_to_plotter
+        apply_to_plotter(self.plotter, self.display_preferences, render=False)
         self.plotter.winId()  # Заставляем Qt выделить память до скрытия
         self._def_center_layout.addWidget(self.plotter)
         from orientation_cube import OrientationCube
@@ -854,10 +858,18 @@ class Ui_MainWindow(object):
         from tool_ribbon import create_tools_ribbon
         tools_panel, self.tools_buttons = create_tools_ribbon()
         self.magics_ribbon.addTab(tools_panel, "ИНСТРУМЕНТЫ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Автоисправление", "Бормашина", "Отверстия", "Триксел"], "Лечение сетки"), "ИСПРАВЛЕНИЕ")
+        from repair_ribbon import create_repair_ribbon, REPAIR_COMMANDS
+        repair_panel, self.repair_buttons = create_repair_ribbon()
+        self.ribbon_btns.update({REPAIR_COMMANDS[key]: button for key, button in self.repair_buttons.items()})
+        self.magics_ribbon.addTab(repair_panel, "ИСПРАВЛЕНИЕ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Текстура 1", "Текстура 2"], "Текстурирование"), "ТЕКСТУРЫ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Перемещать", "Вращать", "Масштабировать", "Отзеркалить"], "Позиционирование"), "РАСПОЛОЖЕНИЕ")
-        self.position_buttons = {name: self.ribbon_btns[name] for name in ("Перемещать", "Вращать", "Масштабировать", "Отзеркалить")}
+        from placement_ribbon import create_placement_ribbon, PLACEMENT_COMMANDS
+        placement_panel, self.placement_buttons = create_placement_ribbon()
+        self.magics_ribbon.addTab(placement_panel, "РАСПОЛОЖЕНИЕ")
+        self.ribbon_btns.update({PLACEMENT_COMMANDS[key]: button for key, button in self.placement_buttons.items()
+                                 if key not in ('move', 'rotate', 'scale', 'mirror')})
+        self.position_buttons = {PLACEMENT_COMMANDS[key]: self.placement_buttons[key]
+                                 for key in ('move', 'rotate', 'scale', 'mirror')}
         # === вкладку менеджера платформ ===
         from workspace_icons import create_workspace_ribbon, SUPPORT_NAMES, workspace_icon
         platform_panel, platform_buttons = create_workspace_ribbon(["Управление платформами"], ['platform'])
@@ -868,8 +880,14 @@ class Ui_MainWindow(object):
         self.magics_ribbon.addTab(support_panel, "ПОДДЕРЖКИ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Heatmap", "Сравнение", "Мин/Макс\nтолщины"], "Контроль"), "АНАЛИЗ И ОТЧЕТЫ")
         self.magics_ribbon.addTab(self.create_ribbon_tab(["Создание срезов\nConcept Laser"], "Concept Laser"), "СРЕЗЫ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Цвет деталей", "Прозрачность", "Отображение\nсетки"], "Визуализация"), "ОТОБРАЖЕНИЕ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Параметры", "Язык", "Горячие\nклавиши"], "Система"), "НАСТРОЙКИ И ПОМОЩЬ")
+        from display_ribbon import create_display_ribbon, DISPLAY_COMMANDS
+        display_panel, self.display_buttons = create_display_ribbon()
+        self.magics_ribbon.addTab(display_panel, 'ОТОБРАЖЕНИЕ')
+        self.ribbon_btns.update({DISPLAY_COMMANDS[key]: button for key, button in self.display_buttons.items()})
+        from settings_icons import create_settings_ribbon, settings_icon
+        settings_panel, settings_buttons = create_settings_ribbon()
+        self.ribbon_btns.update(settings_buttons)
+        self.magics_ribbon.addTab(settings_panel, settings_icon('Параметры'), "НАСТРОЙКИ И ПОМОЩЬ")
 
         self.ribbon_btns.update(self.tools_buttons)
         layout.addWidget(self.magics_ribbon)
@@ -1106,6 +1124,10 @@ class Ui_MainWindow(object):
         fl.addWidget(self.btn_load_scan, 1, 1)
         self.btn_repair_models = QPushButton("✚ Мастер исправлений моделей")
         fl.addWidget(self.btn_repair_models, 2, 0, 1, 2)
+        from cad_dialog import cad_icon
+        self.btn_cad_tools = QPushButton('CAD / STEP: тела и поверхности')
+        self.btn_cad_tools.setIcon(cad_icon())
+        fl.addWidget(self.btn_cad_tools, 3, 0, 1, 2)
         l.addWidget(group_files)
 
         # 2. Параметры поиска

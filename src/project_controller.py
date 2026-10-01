@@ -55,6 +55,13 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             self.dirty = True
             self.update_title()
             self.queue_history()
+            display = getattr(self, 'display_tools', None)
+            if display is not None: display.statistics.request()
+            workspace = getattr(self, 'workspace_tools', None)
+            if workspace is not None: workspace.request_part_selection()
+            tools = getattr(self, 'cad_tools', None)
+            if tools is not None and tools.dialog is not None and tools.dialog.isVisible() and self._job is None:
+                tools.refresh()
 
     def update_title(self, project_name=None):
         name = project_name or (os.path.basename(self.project_path) if self.project_path else "Без названия")
@@ -63,6 +70,12 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         self.lbl_app_title.setText(title)
 
     def _busy(self):
+        if getattr(self, '_placement_session', None) is not None and not getattr(self, '_applying_placement', False):
+            self.log("Завершите размещение в открытом окне инструмента.")
+            return True
+        if getattr(self, '_repair_session', None) is not None and not getattr(self, '_applying_repair', False):
+            self.log("Завершите исправление в открытом окне инструмента.")
+            return True
         if getattr(self, '_transform_session', None) is not None and not getattr(self, '_applying_transform', False):
             self.log("Завершите преобразование в открытом окне инструмента.")
             return True
@@ -96,6 +109,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                     self.ui.btn_clear_callouts, self.ui.section_panel]
         controls += list(self.ui.ribbon_btns.values()) + list(self.ui.position_buttons.values())
         controls.append(self.ui.btn_repair_models)
+        controls.append(self.ui.btn_cad_tools)
         if hasattr(self.ui, 'surface_toolbar'): controls.append(self.ui.surface_toolbar)
         controls.append(self.ui.measurement_panel)
         if hasattr(self, 'workspace_tools') and self.workspace_tools.supports.panel:
@@ -104,7 +118,12 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                      self.ui.sb_factor, self.ui.sb_factor_z, self.ui.chk_link_factor,
                      self.ui.cb_search_time, self.ui.chk_icp, self.ui.sb_align_tolerance, self.ui.sb_align_coverage, self.ui.sb_max_deviation,
                      self.ui.sb_min_coverage, self.ui.sliders["heat_limit"][0]]
-        self._job_previous_enabled = [(control, control.isEnabled()) for control in dict.fromkeys(controls)]
+        # A modeless tool may disable a parent panel. Preserve each child's own
+        # enabled state, otherwise restoring it would permanently disable the
+        # ribbon buttons after that parent is enabled again.
+        self._job_previous_enabled = [(control, control.isEnabledTo(control.parentWidget())
+                                       if isinstance(control, QWidget) else control.isEnabled())
+                                      for control in dict.fromkeys(controls)]
         for control, _ in self._job_previous_enabled:
             control.setEnabled(False)
         self.ui.section_panel._make_widget()
@@ -182,6 +201,8 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
 
     def cancel_current_job(self):
         if self._job:
+            if hasattr(self, 'drop_imports'):
+                self.drop_imports.clear()
             self._job.requestInterruption()
             self.ui.btn_cancel_align.setEnabled(False)
             self.ui.btn_cancel_def.setEnabled(False)
@@ -194,6 +215,12 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         if updater and not updater.allow_close():
             event.ignore()
             return
+        repair = getattr(self, '_repair_session', None)
+        if repair is not None and not repair.dialog.running:
+            repair.dialog.reject()
+        placement = getattr(self, '_placement_session', None)
+        if placement is not None and not placement.dialog.running:
+            placement.dialog.reject()
         session = getattr(self, '_transform_session', None)
         if session is not None:
             session.dialog.reject()
@@ -208,6 +235,8 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             event.ignore()
             return
         self._history_timer.stop()
+        if hasattr(self, 'drop_imports'):
+            self.drop_imports.clear()
         if hasattr(self, 'workspace_tools') and self.workspace_tools.cube:
             self.workspace_tools.cube.dispose()
         if getattr(self.ui, 'def_cube', None):
@@ -443,7 +472,12 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         key = f"slicer_part_{row}"
         pv_mesh = self.trimesh_to_pyvista(mesh)
         color = style.get("color", "#d3d3d3")
+        camera = getattr(self.ui.slicer_plotter, 'camera', None)
+        center = camera.GetFocalPoint() if camera is not None else None
         self.ui.slicer_plotter.add_mesh(pv_mesh, color=color, name=key)
+        if center is not None:
+            # PyVista may frame the first actor; importing must not select its orbit center.
+            self.set_slicer_rotation_center(center, render=False)
         transparency = int(str(style.get("transparency", 0)).rstrip("%"))
         self.slicer_parts.append(dict(mesh=mesh, mesh_pv=pv_mesh, filename=filename, actor_name=key,
                                      platform=platform, last_visible_mode=style.get("last_visible_mode", "shaded_wire"),
@@ -485,14 +519,25 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         if self._busy(): return
         path, _ = QFileDialog.getOpenFileName(self, "Импорт детали", "", "Модели (*.stl *.step *.stp);;STL (*.stl);;STEP (*.step *.stp)")
         if not path: return
+        index = self.ui.scene_tabs.currentIndex()
+        platforms = [p for p in self.platforms if p['is_default']]
+        platform = platforms[index - 1]['name'] if 0 < index <= len(platforms) else None
+        self._import_slicer_path(path, platform=platform)
+
+    def _import_slicer_path(self, path, *, platform):
+        """Import a path into a captured scene, also used by file drops."""
+        if self._busy(): return
         precision = self._step_import_precision(path)
         if precision is None: return
+        if self._step_import_options.get('native'):
+            from cad_tools import load_native_parts
+            self.start_job(FunctionWorker(load_native_parts, path, *precision,
+                split=self._step_import_options['split_bodies'], with_progress=True),
+                lambda meshes: self.cad_tools.append_import(meshes, path, platform))
+            return
         from mesh_repair import request_repair
         options = request_repair(self, 'Part')
         if options is None: return
-        index = self.ui.scene_tabs.currentIndex()
-        platforms = [p for p in self.platforms if p["is_default"]]
-        platform = platforms[index - 1]["name"] if 0 < index <= len(platforms) else None
         if options is False:
             self.start_job(FunctionWorker(load_mesh, path, *precision),
                            lambda mesh: self._append_slicer_part(mesh, os.path.basename(path), platform))
@@ -520,14 +565,19 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             self.mark_dirty()
             self.flush_history()
 
-    def _step_import_precision(self, path):
+    def _step_import_precision(self, path, *, allow_split=True):
+        self._step_import_options = {}
         if not path.lower().endswith((".step", ".stp")):
             return 0.05, 0.25
         import math
         from import_dialog import StepImportDialog
-        dialog = StepImportDialog(self)
-        if not dialog.exec(): return None
+        dialog = StepImportDialog(self, allow_split=allow_split)
+        if not dialog.exec():
+            dialog.deleteLater()
+            return None
         linear, angle = dialog.values()
+        self._step_import_options = dialog.options()
+        dialog.deleteLater()
         self.log(f"[i] Импорт STEP: отклонение {linear:g} мм, угол {math.degrees(angle):g}°, единицы — мм.")
         return linear, angle
 
@@ -590,17 +640,17 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
     def load_scan(self):
         self._import_model("Scan")
 
-    def _import_model(self, kind):
+    def _import_model(self, kind, path=None, *, replace=True):
         if self._busy(): return
-        file_filter = "Модели (*.stl *.step *.stp);;STL (*.stl);;STEP (*.step *.stp)" if kind == "CAD" else "STL (*.stl)"
-        path, _ = QFileDialog.getOpenFileName(self, f"Загрузить {kind}", "", file_filter)
+        if path is None:
+            file_filter = "Модели (*.stl *.step *.stp);;STL (*.stl);;STEP (*.step *.stp)" if kind == "CAD" else "STL (*.stl)"
+            path, _ = QFileDialog.getOpenFileName(self, f"Загрузить {kind}", "", file_filter)
         if not path: return
-        precision = self._step_import_precision(path)
+        precision = self._step_import_precision(path, allow_split=False)
         if precision is None: return
-        from mesh_repair import request_repair
-        options = request_repair(self, kind)
-        if options is None: return
+        imported_key = None
         def loaded(mesh):
+            nonlocal imported_key
             self.ui._ensure_def_plotter()
             self.clear_picks()
             self.ui.chk_show_vectors.setChecked(False)
@@ -610,10 +660,19 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                 self.cad_mesh = mesh
                 self._repair_checked_cad = None
             else: self.scan_mesh = mesh
-            key = self.add_def_table_item(table, os.path.basename(path), kind, clear_table=True)
+            if imported_key is None:
+                imported_key = self.add_def_table_item(table, os.path.basename(path), kind, clear_table=replace)
+            key = imported_key
             self.show_mesh(key, mesh)
             self.scene_models[key]['name'] = os.path.basename(path)
             self.mark_dirty()
+        if self._step_import_options.get('native'):
+            from cad_import import load_step
+            self.start_job(FunctionWorker(load_step, path, *precision, native=True, with_progress=True), loaded)
+            return
+        from mesh_repair import request_repair
+        options = request_repair(self, kind)
+        if options is None: return
         if options is False:
             self.start_job(FunctionWorker(load_mesh, path, *precision), loaded)
             self.ui.status_label.setText('Загрузка без диагностики и лечения…')

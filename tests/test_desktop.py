@@ -26,17 +26,21 @@ class TestPlotter:
     def __init__(self):
         self.actors = {}
         self.scalar_bars = {}
+        self.axes_enabled = False
+        self.axes_created = 0
     def add_mesh(self, mesh, name=None, **kwargs):
         actor = pv.Actor(mapper=pv.DataSetMapper(dataset=mesh))
         if 'color' in kwargs: actor.prop.color = kwargs['color']
         self.actors[name or str(id(actor))] = actor
         return actor
-    def remove_actor(self, actor):
+    def remove_actor(self, actor, **kwargs):
         key = actor if isinstance(actor, str) else next((k for k, v in self.actors.items() if v is actor), None)
         self.actors.pop(key, None)
     def clear(self): self.actors.clear(); self.scalar_bars.clear()
-    def add_axes(self): pass
-    def hide_axes(self): pass
+    def add_axes(self):
+        self.axes_enabled = True
+        self.axes_created += 1
+    def hide_axes(self): self.axes_enabled = False
     def reset_camera(self): pass
     def reset_camera_clipping_range(self): pass
     def render(self): pass
@@ -206,6 +210,28 @@ class DesktopTests(unittest.TestCase):
         with patch("UI_Meshropractor.DialogNewProject.exec", return_value=0):
             self.window.action_new_project()
         self.assertIs(self.window.cad_mesh, previous)
+
+    def test_new_project_in_current_slicer_does_not_recreate_vtk_axes(self):
+        window = self.window
+        window.ui.stack.setCurrentWidget(window.ui.page_slicer)
+        plotter = window.ui.slicer_plotter
+        # An old axis marker must be disabled even when the stack stays on the
+        # same page: no currentChanged/refresh_overlays signal will hide it.
+        plotter.add_axes()
+        created = plotter.axes_created
+
+        def choose_slicer(dialog):
+            dialog.selected_mode = 'slicer'
+            return 1
+
+        with patch('UI_Meshropractor.DialogNewProject.exec', choose_slicer):
+            for _ in range(2):
+                window.dirty = False
+                window.action_new_project()
+                self.assertIs(window.ui.stack.currentWidget(), window.ui.page_slicer)
+                self.assertIs(window.ui.slicer_plotter, plotter)
+                self.assertFalse(plotter.axes_enabled)
+                self.assertEqual(plotter.axes_created, created)
 
     def test_restore_all_results_and_active_map(self):
         cube = trimesh.creation.box()
@@ -472,7 +498,7 @@ class DesktopTests(unittest.TestCase):
         dialog.linear.setValue(.03)
         self.assertAlmostEqual(dialog.values()[1], np.deg2rad(12))
         self.assertEqual(dialog.values()[0], .03)
-        with patch('import_dialog.StepImportDialog.exec', return_value=1), patch('import_dialog.StepImportDialog.values', return_value=(.03, np.deg2rad(12))), patch('project_controller.QFileDialog.getOpenFileName', return_value=('part.step', '')), patch('mesh_repair.load_mesh', return_value=trimesh.creation.box()) as loader:
+        with patch('import_dialog.StepImportDialog.exec', return_value=1), patch('import_dialog.StepImportDialog.options', return_value={'native': False, 'split_bodies': False}), patch('import_dialog.StepImportDialog.values', return_value=(.03, np.deg2rad(12))), patch('project_controller.QFileDialog.getOpenFileName', return_value=('part.step', '')), patch('mesh_repair.load_mesh', return_value=trimesh.creation.box()) as loader:
             self.window.load_cad()
             self.wait_for_job()
             loader.assert_called_once_with('part.step', .03, np.deg2rad(12))

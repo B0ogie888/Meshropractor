@@ -102,23 +102,25 @@ def check():
         panel.settings_tabs.setCurrentIndex(0)
         # Actual click on a projected face of the transparent cube.
         cube_widget = work.cube
-        cube_widget.grab().save(str(output / 'workspace-view-cube.png'))
-        assert cube_widget.testAttribute(Qt.WA_NativeWindow), 'Cube must render above the native VTK window'
         window.raise_()
         window.activateWindow()
         QTest.qWait(250)
         def capture_cube(widget, name):
-            capture = widget.grab()
-            capture.save(str(output / name))
-            pixels = capture.toImage()
-            dark = sum(max(pixels.pixelColor(x, y).red(), pixels.pixelColor(x, y).green(),
-                           pixels.pixelColor(x, y).blue()) < 180
-                       for x in range(15, 120) for y in range(15, 120))
+            from PIL import Image
+            frame = widget.plotter.screenshot(return_img=True)
+            rect = widget.geometry()
+            ratio = frame.shape[1] / widget.plotter.width()
+            pixels = frame[round(rect.y()*ratio):round((rect.y()+rect.height())*ratio),
+                           round(rect.x()*ratio):round((rect.x()+rect.width())*ratio)]
+            Image.fromarray(pixels).save(str(output / name))
+            dark = np.count_nonzero(pixels[..., :3].max(axis=2) < 180)
             assert dark > 30, 'Cube edges were not painted'
-            assert not widget.mask().contains(QPoint(4, 4)), 'Rectangular background must not cover the scene'
+            assert widget.face_at(QPoint(4, 4)) is None, 'Empty cube corner must pass clicks to the scene'
+            assert widget.renderer.GetPreserveColorBuffer(), 'Cube layer must preserve the scene background'
         capture_cube(cube_widget, 'workspace-cube-render.png')
         face = next((item for item in cube_widget.faces if item[1:] == (2, -1)), cube_widget.faces[-1])
-        QTest.mouseClick(cube_widget, Qt.LeftButton, Qt.NoModifier, face[0].boundingRect().center().toPoint())
+        QTest.mouseClick(plotter, Qt.LeftButton, Qt.NoModifier,
+                         cube_widget.geometry().topLeft() + face[0].boundingRect().center().toPoint())
         direction = np.asarray(plotter.camera.position) - plotter.camera.focal_point
         assert abs(direction[face[1]]) / np.linalg.norm(direction) > .99, 'View cube did not align camera'
         window.draw_platform(dict(dim=[25,25,40]))
@@ -163,7 +165,8 @@ def check():
         def_cube = window.ui.def_cube
         capture_cube(def_cube, 'predef-cube-render.png')
         face = def_cube.faces[-1]
-        QTest.mouseClick(def_cube, Qt.LeftButton, Qt.NoModifier, face[0].boundingRect().center().toPoint())
+        QTest.mouseClick(window.ui.plotter, Qt.LeftButton, Qt.NoModifier,
+                         def_cube.geometry().topLeft() + face[0].boundingRect().center().toPoint())
         direction = np.asarray(window.ui.plotter.camera.position) - window.ui.plotter.camera.focal_point
         assert abs(direction[face[1]]) / np.linalg.norm(direction) > .99
         window.ui.stack.setCurrentWidget(window.ui.page_slicer)

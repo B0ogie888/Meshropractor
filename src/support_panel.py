@@ -55,6 +55,7 @@ class SupportPanel(QWidget):
         self.tools, self.window, self.workspace = tools, tools.window, tools.workspace
         self.loading = False
         self.previous_sizes = None
+        self._pending_selection_key = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(3, 3, 3, 3)
         header = QHBoxLayout()
@@ -170,7 +171,21 @@ class SupportPanel(QWidget):
         if row is None: return []
         selected = sorted(self.workspace.selection.get(row, set()))
         group = self.current_group()
+        if self.needs_reselection(group): return selected
         return selected if selected else group.get('surface_faces', []) if group else []
+
+    @staticmethod
+    def needs_reselection(group):
+        return bool(group and group.get('cad_binding', {}).get('requires_reselect'))
+
+    def reselection_notice(self, group):
+        return group.get('cad_binding', {}).get('notice') or 'Выберите область CAD заново перед перестроением поддержек.'
+
+    def surface_mode(self):
+        from cad_state import cad_status
+        row = self.row()
+        return ('cad_face' if row is not None and cad_status(self.window.slicer_parts[row]['mesh']) == 'native'
+                else 'plane')
 
     def parameters(self):
         params = {key: spin.value() for key, spin in self.fields.items()}
@@ -188,7 +203,7 @@ class SupportPanel(QWidget):
         self.window.ui.slicer_splitter.setSizes([620, max(400, self.window.width()-620), 0])
         self.refresh()
         self.part_changed()
-        self.workspace.set_mode('plane')
+        self.workspace.set_mode(self.surface_mode())
         QTimer.singleShot(0, lambda: self.window.ui.slicer_left_scroll.ensureWidgetVisible(self, 0, 0))
 
     def finish(self):
@@ -244,7 +259,19 @@ class SupportPanel(QWidget):
             blocker = QSignalBlocker(self.show_support)
             self.show_support.setChecked(group.get('visible', True))
             del blocker
-            if select_surface: self.workspace.edit_selection(self.row(), set(group['surface_faces']), 'replace')
+            if self.needs_reselection(group):
+                # Retessellation invalidates partial regions. Do not silently
+                # select only the remaining complete CAD faces of this group.
+                key = (group['id'], id(self.window.slicer_parts[self.row()]['mesh']))
+                if self._pending_selection_key != key:
+                    self._pending_selection_key = key
+                    self.workspace.edit_selection(self.row(), set(), 'replace')
+                self.status.setText(self.reselection_notice(group))
+            else:
+                self._pending_selection_key = None
+                if select_surface: self.workspace.edit_selection(self.row(), set(group['surface_faces']), 'replace')
+        else:
+            self._pending_selection_key = None
         self.selection_changed()
 
     def selection_changed(self):
@@ -279,8 +306,12 @@ class SupportPanel(QWidget):
     def select_faces(self):
         group = self.current_group()
         if group:
-            self.workspace.set_mode('plane')
-            self.workspace.edit_selection(self.row(), set(group['surface_faces']), 'replace')
+            self.workspace.set_mode(self.surface_mode())
+            if self.needs_reselection(group):
+                self.workspace.edit_selection(self.row(), set(), 'replace')
+                self.status.setText(self.reselection_notice(group))
+            else:
+                self.workspace.edit_selection(self.row(), set(group['surface_faces']), 'replace')
 
     def delete_region(self):
         if self.window._busy(): return
@@ -306,6 +337,9 @@ class SupportPanel(QWidget):
     def rebuild(self):
         if self.window._busy(): return
         row, group = self.row(), self.current_group()
+        if self.needs_reselection(group) and not self.workspace.selection.get(row):
+            self.status.setText(self.reselection_notice(group))
+            return
         if row is None or not self.faces():
             self.status.setText('Выберите область поверхности.')
             return

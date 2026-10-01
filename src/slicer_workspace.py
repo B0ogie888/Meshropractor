@@ -26,6 +26,13 @@ class SlicerWorkspace(QObject):
         self.menu = None
         self.manual = None
         self.cube = None
+        self.part_outlines = {}
+        self.part_box_candidate = False
+        self.part_box_active = False
+        self.part_selection_timer = QTimer(self)
+        self.part_selection_timer.setSingleShot(True)
+        self.part_selection_timer.setInterval(40)
+        self.part_selection_timer.timeout.connect(self.refresh_part_selection)
         self.toolbar = QWidget()
         self.toolbar.setStyleSheet('QLabel {color: #ddd;} QToolButton {border: 1px solid transparent; padding: 2px;} QToolButton:hover {background: #444;}')
         layout = QHBoxLayout(self.toolbar)
@@ -33,13 +40,18 @@ class SlicerWorkspace(QObject):
         layout.setSpacing(2)
         self.group = QButtonGroup(self)
         self.buttons = {}
-        names = [('part', 'Выбор деталей / навигация'), ('triangle', 'Выбор треугольника'),
+        names = [('part', 'Выбор деталей / навигация: щелчок — деталь; рамка от пустого места — выбор; Alt + мышь — вращение'), ('triangle', 'Выбор треугольника'),
+                 ('cad_face', 'Выбор целой CAD-поверхности (BREP)'),
                  ('plane', 'Выбор связной плоскости'), ('smooth', 'Выбор плавной поверхности'),
                  ('component', 'Выбор связной оболочки'), ('brush', 'Кисть по поверхности'),
                  ('rectangle', 'Прямоугольник: видимые треугольники')]
         for mode, title in names:
             button = QToolButton()
-            button.setIcon(workspace_icon(mode))
+            if mode == 'cad_face':
+                from cad_dialog import cad_icon
+                button.setIcon(cad_icon())
+            else:
+                button.setIcon(workspace_icon(mode))
             button.setIconSize(QSize(24, 24))
             button.setToolTip(title)
             button.setAccessibleName(title)
@@ -104,9 +116,11 @@ class SlicerWorkspace(QObject):
             from orientation_cube import OrientationCube
             self.cube = OrientationCube(plotter)
             plotter.hide_axes()
+        self.window.set_slicer_rotation_center(render=False)
 
     def busy(self):
-        return bool(self.window._job or getattr(self.window, '_transform_session', None))
+        return bool(self.window._job or getattr(self.window, '_transform_session', None)
+                    or getattr(self.window, '_repair_session', None) or getattr(self.window, '_placement_session', None))
 
     def set_mode(self, mode):
         if hasattr(self, 'measurements'): self.measurements.stop()
@@ -129,6 +143,7 @@ class SlicerWorkspace(QObject):
         if hasattr(self, 'measurements'): self.measurements.clear()
         self.manual = None
         self.left_down = False
+        self.part_box_candidate = self.part_box_active = False
         if self.rubber: self.rubber.hide()
         if self.menu: self.menu.close()
         for mapping in (self.overlays, self.preview):
@@ -137,6 +152,9 @@ class SlicerWorkspace(QObject):
             mapping.clear()
         self.selection.clear()
         self.topologies.clear()
+        if self.plotter:
+            for actor, _ in self.part_outlines.values(): self.plotter.remove_actor(actor)
+        self.part_outlines.clear()
         self.count.setText('Грани: 0')
 
     def invalidate(self, row):
@@ -186,6 +204,16 @@ class SlicerWorkspace(QObject):
             return
         row, face, point = hit
         mesh = self.window.slicer_parts[row]['mesh']
+        if self.mode == 'cad_face':
+            from cad_state import cad_face_triangles
+            try:
+                ids = cad_face_triangles(mesh, face)
+            except ValueError as exc:
+                self.window.log(str(exc))
+                return
+            self.edit_selection(row, ids, operation)
+            if hasattr(self.window, 'cad_tools'): self.window.cad_tools.surface_info(row, face)
+            return
         topology = self.topologies.get(row)
         if topology is None or topology.mesh is not mesh:
             topology = self.topologies[row] = SurfaceTopology(mesh)
@@ -231,6 +259,77 @@ class SlicerWorkspace(QObject):
                     planes = source.GetMapper().GetClippingPlanes()
                     if planes:
                         for i in range(planes.GetNumberOfItems()): mapper.AddClippingPlane(planes.GetItem(i))
+        self.refresh_part_selection(render=False)
+
+    def request_part_selection(self):
+        self.part_selection_timer.start()
+
+    def refresh_part_selection(self, *, render=True):
+        self.part_selection_timer.stop()
+        self.plotter = self.window.ui.slicer_plotter
+        if self.plotter is None: return
+        rows = set(self.window.selected_slicer_rows())
+        for row, (actor, mesh) in list(self.part_outlines.items()):
+            if (row not in rows or row >= len(self.window.slicer_parts)
+                    or self.window.slicer_parts[row]['mesh'] is not mesh):
+                self.plotter.remove_actor(actor, render=False)
+                self.part_outlines.pop(row)
+        for row in rows:
+            part = self.window.slicer_parts[row]
+            name = f'part_selection_{row}'
+            source = self.plotter.actors.get(part['actor_name'])
+            if source is None: continue
+            if row not in self.part_outlines or name not in self.plotter.actors:
+                actor = self.plotter.add_mesh(part['mesh_pv'].outline(), name=name, color='#edaa38',
+                    line_width=2, pickable=False, reset_camera=False, render=False, lighting=False)
+                self.part_outlines[row] = (actor, part['mesh'])
+            actor = self.part_outlines[row][0]
+            actor.SetVisibility(source.GetVisibility())
+            actor.SetUserMatrix(source.GetUserMatrix())
+        if render: self.plotter.render()
+
+    def select_parts(self, rows, operation='replace'):
+        rows = set(rows)
+        changed = False
+        for row in range(len(self.window.slicer_parts)):
+            check = self.window.ui.tbl_parts.cellWidget(row, 1).findChild(QCheckBox)
+            selected = check.isChecked()
+            if operation == 'replace': value = row in rows
+            elif operation == 'add': value = selected or row in rows
+            elif operation == 'subtract': value = selected and row not in rows
+            else: value = not selected if row in rows else selected
+            if value != selected:
+                check.blockSignals(True); check.setChecked(value); check.blockSignals(False)
+                changed = True
+        if rows: self.window.ui.tbl_parts.selectRow(min(rows))
+        elif operation == 'replace': self.window.ui.tbl_parts.clearSelection()
+        if changed: self.window.mark_dirty()
+        self.refresh_part_selection()
+        if hasattr(self.window, 'display_tools'): self.window.display_tools.statistics.request()
+
+    @staticmethod
+    def part_operation(event):
+        if event.modifiers() & Qt.ControlModifier: return 'toggle'
+        if event.modifiers() & Qt.ShiftModifier: return 'add'
+        return 'replace'
+
+    def select_parts_rectangle(self, rect, operation):
+        selector = vtkHardwareSelector()
+        selector.SetRenderer(self.plotter.renderer)
+        selector.SetFieldAssociation(1)
+        ratio = self.plotter.devicePixelRatioF()
+        width, height = self.plotter.render_window.GetSize()
+        x = lambda value: max(0, min(width - 1, round(value * ratio)))
+        y = lambda value: max(0, min(height - 1, round(height - 1 - value * ratio)))
+        selector.SetArea(x(rect.left()), y(rect.bottom()), x(rect.right()), y(rect.top()))
+        sources = {row: self.plotter.actors[self.window.slicer_parts[row]['actor_name']]
+                   for row in self.visible_rows(False)}
+        result, rows = selector.Select(), set()
+        if result:
+            for index in range(result.GetNumberOfNodes()):
+                actor = result.GetNode(index).GetProperties().Get(vtkSelectionNode.PROP())
+                rows.update(row for row, source in sources.items() if source == actor)
+        self.select_parts(rows, operation)
 
     def select_rectangle(self, rect, operation):
         selector = vtkHardwareSelector()
@@ -261,9 +360,29 @@ class SlicerWorkspace(QObject):
         self.menu = RadialMenu(self.window)
         self.menu.popup(position)
 
+    def focus_at(self, position):
+        hit = self.picker(position, selected_only=False)
+        center = (0., 0., 0.)
+        if hit:
+            actor = self.plotter.actors[self.window.slicer_parts[hit[0]]['actor_name']]
+            if actor.GetVisibility():
+                center = actor.center
+        self.window.set_slicer_rotation_center(center)
+
     def eventFilter(self, obj, event):
         if obj is not self.plotter or self.busy(): return False
         kind = event.type()
+        if kind == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+            navigating = self.mode == 'part' and not self.measurements.active and not self.manual
+            if navigating or event.modifiers() & Qt.AltModifier:
+                self.left_start = None
+                self.left_down = False
+                self.part_box_candidate = self.part_box_active = False
+                if self.rubber: self.rubber.hide()
+                self._tool_click = True
+                self.focus_at(event.position().toPoint())
+                event.accept()
+                return True
         if kind == QEvent.KeyPress and event.key() == Qt.Key_Escape:
             self.manual = None
             self.set_mode('part')
@@ -279,6 +398,7 @@ class SlicerWorkspace(QObject):
             self.right_start = None
         if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
             self.left_start = event.position().toPoint()
+            self.part_box_candidate = self.part_box_active = False
             if self.measurements.active and not event.modifiers() & Qt.AltModifier:
                 self._tool_click = True
                 self.measurements.pick(self.left_start)
@@ -297,6 +417,22 @@ class SlicerWorkspace(QObject):
                     self.select_at(self.left_start, self.stroke_operation)
                     if self.stroke_operation == 'replace': self.stroke_operation = 'add'
                 return True
+            if self.mode == 'part' and not event.modifiers() & Qt.AltModifier:
+                hit = self.picker(self.left_start, selected_only=False)
+                self.part_box_candidate = hit is None or bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
+                self.part_box_operation = self.part_operation(event)
+                if self.part_box_candidate: return True
+        if kind == QEvent.MouseMove and self.part_box_candidate:
+            if not event.buttons() & Qt.LeftButton:
+                self.part_box_candidate = self.part_box_active = False
+                if self.rubber: self.rubber.hide()
+                return False
+            if (event.position().toPoint() - self.left_start).manhattanLength() >= 4:
+                self.part_box_active = True
+                if self.rubber:
+                    self.rubber.setGeometry(QRect(self.left_start, event.position().toPoint()).normalized())
+                    self.rubber.show()
+            return True
         if kind == QEvent.MouseMove and self.left_down:
             if self.mode == 'brush': self.select_at(event.position().toPoint(), self.stroke_operation)
             if self.mode == 'rectangle': self.rubber.setGeometry(QRect(self.left_start, event.position().toPoint()).normalized())
@@ -305,6 +441,15 @@ class SlicerWorkspace(QObject):
             if getattr(self, '_tool_click', False):
                 self._tool_click = False
                 return True
+            if self.part_box_candidate:
+                self.part_box_candidate = False
+                if self.part_box_active:
+                    self.part_box_active = False
+                    rect = QRect(self.left_start, event.position().toPoint()).normalized()
+                    if self.rubber: self.rubber.hide()
+                    self.select_parts_rectangle(rect, self.part_box_operation)
+                    self.left_start = None
+                    return True
             if self.left_down:
                 self.left_down = False
                 if self.mode == 'rectangle':
@@ -312,14 +457,9 @@ class SlicerWorkspace(QObject):
                     self.rubber.hide()
                     self.select_rectangle(rect, self.stroke_operation)
                 return True
-            if self.mode == 'part' and hasattr(self, 'left_start') and (event.position().toPoint() - self.left_start).manhattanLength() < 4:
+            if self.mode == 'part' and not event.modifiers() & Qt.AltModifier and getattr(self, 'left_start', None) is not None and (event.position().toPoint() - self.left_start).manhattanLength() < 4:
                 hit = self.picker(event.position().toPoint(), selected_only=False)
-                if hit:
-                    row = hit[0]
-                    additive = event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
-                    for r in range(len(self.window.slicer_parts)):
-                        check = self.window.ui.tbl_parts.cellWidget(r, 1).findChild(QCheckBox)
-                        if r == row: check.setChecked(not check.isChecked() if additive else True)
-                        elif not additive: check.setChecked(False)
-                    self.window.ui.tbl_parts.selectRow(row)
+                self.select_parts([hit[0]] if hit else [], self.part_operation(event))
+                self.left_start = None
+                return True
         return False

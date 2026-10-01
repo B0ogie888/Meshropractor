@@ -1,5 +1,11 @@
 # Файл: Meshropractor.py
 import sys
+from startup_logging import configure_windowed_logging
+
+# pythonw and the windowed EXE have no stdout/stderr. Initialize them before
+# importing Qt, Torch and geometry libraries so errors still reach a log file.
+configure_windowed_logging()
+
 import time
 import numpy as np
 import trimesh
@@ -188,9 +194,6 @@ class MainWindow(ProjectController):
         self.ui.cb_info_name.currentIndexChanged.connect(self.update_part_info_tab)
         self.ui.btn_info_next.clicked.connect(self.select_next_part_info)
 
-        # Обработка клика по детали (для фокусировки камеры)
-        self.ui.tbl_parts.cellClicked.connect(self.on_slicer_part_selection_changed)
-
         # --- НОВЫЕ СИГНАЛЫ ДЛЯ ПЕРЕИМЕНОВАНИЯ ---
         self.ui.tbl_parts.cellDoubleClicked.connect(self.on_slicer_part_double_clicked)
         self.ui.tbl_parts.cellChanged.connect(self.on_slicer_part_name_changed)
@@ -200,7 +203,6 @@ class MainWindow(ProjectController):
 
         self.ui.btn_heatmap.clicked.connect(self.generate_heatmap)
         self.ui.btn_repair_models.clicked.connect(self.open_repair_wizard)
-        self.ui.ribbon_btns["Автоисправление"].clicked.connect(self.open_repair_wizard)
         self.ui.btn_clear_heat.clicked.connect(self.clear_heatmap)
         self.ui.chk_callouts.stateChanged.connect(self.toggle_callout_mode)
         self.ui.btn_clear_callouts.clicked.connect(self.clear_callouts)
@@ -212,7 +214,15 @@ class MainWindow(ProjectController):
                               "Импорт детали", "Выгрузить деталь", "Сохранить выбранные детали как", "Управление платформами"}
         from slicer_tools import TOOL_NAMES
         available_commands.update(TOOL_NAMES)
-        available_commands.add("Автоисправление")
+        from repair_ribbon import REPAIR_COMMANDS
+        available_commands.update(REPAIR_COMMANDS.values())
+        from placement_ribbon import PLACEMENT_COMMANDS
+        available_commands.update(PLACEMENT_COMMANDS.values())
+        available_commands.add('CAD / STEP')
+        from display_ribbon import DISPLAY_COMMANDS
+        available_commands.update(DISPLAY_COMMANDS.values())
+        from settings_icons import SETTINGS_COMMANDS
+        available_commands.update(SETTINGS_COMMANDS)
         for name, button in self.ui.ribbon_btns.items():
             if name not in available_commands:
                 button.setEnabled(False)
@@ -224,11 +234,23 @@ class MainWindow(ProjectController):
         self.init_slicer_tools()
         from slicer_workspace import SlicerWorkspace
         self.workspace_tools = SlicerWorkspace(self)
+        from repair_tools import RepairTools
+        self.repair_tools = RepairTools(self)
+        from placement_tools import PlacementTools
+        self.placement_tools = PlacementTools(self)
+        from cad_tools import CADTools
+        self.cad_tools = CADTools(self)
+        from display_tools import DisplayTools
+        self.display_tools = DisplayTools(self)
         from window_snap import enable_snap
         enable_snap(self)
         QApplication.instance().installEventFilter(self)
         from app_updater import UpdateController
         self.updater = UpdateController(self)
+        from display_settings import DisplaySettingsController
+        self.display_settings = DisplaySettingsController(self)
+        from scene_drop import SceneDropController
+        self.drop_imports = SceneDropController(self)
 
     def _apply_dark_titlebar(self, widget):
         """Включает DWM Dark Mode для системных заголовков Windows 10/11"""
@@ -749,29 +771,29 @@ class MainWindow(ProjectController):
             self._slicer_batch = False
 
     def save_selected_slicer_parts(self):
-        """Сохраняет выбранные галочкой детали из слайсера в STL"""
+        """Export mesh with supports as STL, or retained CAD bodies as exact STEP."""
         if self._busy(): return
         if self.ui.tbl_parts.rowCount() == 0 or not self.slicer_parts:
             self.log("[!] ОШИБКА: Нет загруженных деталей для сохранения.")
             return
 
-        meshes_to_save = []
-        # Собираем меши всех деталей, у которых стоит галочка в колонке 1
-        for row in self.selected_slicer_rows():
-            container = self.ui.tbl_parts.cellWidget(row, 1)
-            if container:
-                chk = container.findChild(QCheckBox)
-                if chk and chk.isChecked():
-                    from part_supports import combined_mesh
-                    meshes_to_save.append(combined_mesh(self.slicer_parts[row]))
-
-        if not meshes_to_save:
+        rows = self.selected_slicer_rows()
+        if not rows:
             self.log("[!] ВНИМАНИЕ: Нет выбранных деталей. Отметьте деталь галочкой в таблице.")
             return
 
-        path, _ = QFileDialog.getSaveFileName(self, "Сохранить выбранные детали", "Exported_Parts.stl",
-                                              "STL Files (*.stl)")
+        path, selected_filter = QFileDialog.getSaveFileName(self, "Сохранить выбранные детали", "Exported_Parts.stl",
+                                              "STL (*.stl);;STEP — CAD-тела (*.step *.stp)")
         if path:
+            from pathlib import Path
+            if Path(path).suffix.lower() in ('.step', '.stp') or selected_filter.startswith('STEP'):
+                if Path(path).suffix.lower() not in ('.step', '.stp'): path = str(Path(path).with_suffix('.step'))
+                records = [dict(mesh=self.slicer_parts[row]['mesh'], supports=self.slicer_parts[row].get('supports', [])) for row in rows]
+                self.cad_tools.export(path, records)
+                return
+            if not path.lower().endswith('.stl'): path += '.stl'
+            from part_supports import combined_mesh
+            meshes_to_save = [combined_mesh(self.slicer_parts[row]) for row in rows]
             self.log(f"\n⏳ Экспорт деталей ({len(meshes_to_save)} шт.) в {path}...")
             try:
                 # Если выбрано несколько деталей, склеиваем их в один STL файл
@@ -805,35 +827,20 @@ class MainWindow(ProjectController):
 
         self.refresh_scene_visibility()
 
-    # Добавляем row и column в аргументы
-    def on_slicer_part_selection_changed(self, row, column):
-        if not getattr(self.ui, 'slicer_plotter', None):
+    def set_slicer_rotation_center(self, center=(0., 0., 0.), *, render=True):
+        """Change the orbit center while retaining view direction and zoom."""
+        plotter = getattr(self.ui, 'slicer_plotter', None)
+        camera = getattr(plotter, 'camera', None)
+        if camera is None:
             return
-
-        if 0 <= row < len(self.slicer_parts):
-            actor_name = self.slicer_parts[row]["actor_name"]
-
-            if actor_name in self.ui.slicer_plotter.actors:
-                actor = self.ui.slicer_plotter.actors[actor_name]
-
-                # --- ИСПРАВЛЕНИЕ БАГА: Не центрируем камеру на скрытых деталях ---
-                if not actor.GetVisibility():
-                    return
-                # -----------------------------------------------------------------
-
-                new_focal_point = np.array(actor.center)
-
-                camera = self.ui.slicer_plotter.camera
-                old_focal_point = np.array(camera.GetFocalPoint())
-
-                shift = new_focal_point - old_focal_point
-
-                old_pos = np.array(camera.GetPosition())
-                camera.SetFocalPoint(*new_focal_point)
-                camera.SetPosition(*(old_pos + shift))
-
-                self.ui.slicer_plotter.reset_camera_clipping_range()
-                self.ui.slicer_plotter.render()
+        center = np.asarray(center, dtype=float)
+        shift = center - np.asarray(camera.GetFocalPoint())
+        position = np.asarray(camera.GetPosition())
+        camera.SetFocalPoint(*center)
+        camera.SetPosition(*(position + shift))
+        plotter.reset_camera_clipping_range()
+        if render:
+            plotter.render()
 
     # ==========================================================
     # МИНИ-МЕНЮ СТОЛБЦА "ЗАТЕНЕНИЕ" (режим отображения детали)
@@ -1573,7 +1580,8 @@ class MainWindow(ProjectController):
         # Безопасная очистка сцены слайсера
         if getattr(self.ui, 'slicer_plotter', None):
             self.ui.slicer_plotter.clear()
-            self.ui.slicer_plotter.add_axes()
+            self.ui.slicer_plotter.hide_axes()
+            self.set_slicer_rotation_center(render=False)
             self.ui.slicer_plotter.render()
 
         self.ui.tbl_cad.setRowCount(0)
@@ -1760,6 +1768,7 @@ class MainWindow(ProjectController):
 
         if getattr(self.ui, 'slicer_plotter', None):
             self.ui.slicer_plotter.reset_camera()
+            self.set_slicer_rotation_center()
 
     def on_cb_plat_changed(self, index):
         """Срабатывает при выборе платформы в выпадающем списке над таблицей"""
@@ -1838,6 +1847,7 @@ class MainWindow(ProjectController):
         self.ui.slicer_plotter.render()
 
         if hasattr(self, 'workspace_tools'): self.workspace_tools.supports.refresh_panel()
+        if hasattr(self, 'display_tools'): self.display_tools.on_scene_changed()
 
     def draw_platform(self, plat_data):
         """Рисует серую металлическую плиту, синий каркас камеры и запретные зоны"""
@@ -1894,6 +1904,7 @@ class MainWindow(ProjectController):
                                                           edge_color="darkred", name=f"plat_zone_{i}")
                 z_actor.pickable = False
                 self.plat_actors.append(z_actor)
+        if hasattr(self, 'display_tools'): self.display_tools.on_scene_changed()
 
     def toggle_callout_mode(self, state=None):
         """Включает/выключает режим интерактивной расстановки флажков кликом мыши"""

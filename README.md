@@ -64,6 +64,21 @@ python src/Meshropractor.py
 
 ## Workflow
 
+The **Placement** ribbon has 13 tools: precise transforms, mouse dragging, face
+orientation, 2D/3D platform packing, orientation search and comparison, bounding-box
+minimization, platform fitting without scaling, and orientation transfer to similar
+parts. Background preparation, previews and Undo/Redo preserve the source meshes;
+packing accounts for supports, existing parts and excluded zones.
+See [placement commands and limitations](docs/PLACEMENT.md).
+
+The **Repair** ribbon provides 25 commands with individual icons: automatic repair,
+normals, stitching, holes, duplicates and overlap detection, component separation and
+Boolean union, manual triangles/bridges, plane clipping, vertex movement, reduction,
+smoothing and remeshing. Operations use checked parts and prepare a background preview;
+Apply commits a single undoable change. Pick vertices/faces in the scene or drag a vertex.
+Wrapping and remeshing are approximate and require visual review before applying.
+See the [command reference and limitations](docs/MESH_REPAIR.md).
+
 The **Repair wizard** is available from the slicer’s Repair tab and beside CAD/scan
 import in Predeformation. Its dropdown includes every loaded part, child support group,
 CAD, scan and result. Full analysis reports open boundaries, nonmanifold edges/vertices,
@@ -97,7 +112,7 @@ continue the map immediately, or cancel the calculation.
 
 While rotating large models (100,000 faces or more), edge overlays are temporarily hidden
 and restored on release. Geometry is not decimated. Static scenes render on changes and
-the view cube caches its image. See [performance measurements (RU)](docs/PERFORMANCE.md).
+the view cube renders in the same frame as the scene without a separate native window. See [performance measurements (RU)](docs/PERFORMANCE.md).
 
 1. Create a deformation project. CAD accepts STL/STEP/STP; scans accept STL.
    STEP units are converted to mm, with selectable tessellation deflection (default
@@ -124,6 +139,15 @@ the view cube caches its image. See [performance measurements (RU)](docs/PERFORM
 Only one background operation runs at a time. Cancellation waits for the current
 native geometry step rather than forcibly terminating a thread. Closing the window
 waits for the task to stop.
+
+## Display settings and help
+
+The slicer's Settings and Help ribbon provides display preferences, keyboard shortcuts,
+help, application information and a manual update check. Preferences include the scene
+background, edge anti-aliasing (MSAA ×4 by default, ×8, FXAA or off) and hiding dense-mesh
+edges during camera interaction. They persist between sessions and apply to both workspaces.
+Anti-aliasing does not change geometry; smoother CAD silhouettes require finer tessellation
+at import. The view cube's colored axes remain attached to one corner while rotating.
 
 ## Slicer sections
 
@@ -164,15 +188,43 @@ point/plane angles. Results appear in the pane and scene and can be copied or hi
 Measurements are temporary and cleared on geometry changes; they use the triangle mesh,
 not analytical CAD surfaces.
 
-Import STL/STEP/STP through Import Part. Enable XY/XZ/YZ or arbitrary planes in the
+Import STL/STEP/STP through Import Part or drag files from Explorer into the active
+viewport. The STEP dialog offers CAD/BREP or a plain STL mesh, with tessellation quality.
+In navigation mode, double-click a part to orbit around its center; double-click empty
+space to return to the build-plate center. Table selection does not change the pivot.
+Use Alt + double-click while selecting surfaces or measuring.
+Enable XY/XZ/YZ or arbitrary planes in the
 Sections panel; up to six half-spaces can be combined. Choose the removed side (+/−),
 position and step in mm. Move with the slider, step buttons or the interactive plane
 («Указать»); arbitrary planes can also rotate. «Выровнять» aligns the camera and
 «Экспорт» exports the selected plane's contours of visible parts as VTP.
 
 Clipping affects display only, preserving the original mesh and STL exports. No artificial
-caps are generated. Planes are saved in `.mrp`; build platforms remain unclipped. STEP
-becomes a triangle mesh: CAD feature editing and STEP export are not implemented.
+caps are generated. Planes are saved in `.mrp`; build platforms remain unclipped.
+
+### Native CAD / STEP
+
+STEP imports retain BREP by default. The slicer can import bodies as separate parts;
+predeformation keeps an assembly together as the nominal CAD model. Select complete
+CAD faces using the CAD button above the scene and generate supports owned by that part.
+The CAD / STEP panel offers retessellation, body separation, exact CAD properties,
+STEP export and explicit conversion to mesh. Placement, duplication, scaling and mirroring
+retain BREP; mesh edits invalidate it and prevent exporting stale CAD. Projects embed
+the BREP source. Calculations and supports use a mesh at the chosen tolerance.
+See [CAD workflow and limitations](docs/CAD.md).
+
+### Display ribbon
+
+25 functional commands cover camera views, smooth shading, simplified display, grids,
+rulers, zones, bounds, mass centers, labels, colors, overhangs, geometric checks,
+volume/material/packing estimates, PNG export, clipboard and printing. The three
+statistics commands form a vertical list and update the top-right overlay for selected
+parts and their supports. Set material density and price using the cost button's arrow.
+Click a part to select it, click empty space to clear selection, or drag a rectangle
+from empty space to select several parts. Shift adds, Ctrl toggles, and Alt lets you
+rotate the scene from empty space. Display toggles
+do not modify source geometry. Geometric checks are not a print simulation.
+See [Display commands](docs/DISPLAY.md).
 
 Click a plane's cell to choose the row controlled by the slider. Hover does not change
 the selected row; wheel events on unfocused fields do not edit another plane.

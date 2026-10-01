@@ -147,6 +147,7 @@ class SlicerToolsMixin:
                 actor = self.ui.slicer_plotter.actors.get('part_support_' + group['id'])
                 if actor is not None: actor.SetUserMatrix(vtk_matrix)
         self.ui.slicer_plotter.reset_camera_clipping_range()
+        if hasattr(self, 'display_tools'): self.display_tools.on_scene_changed()
         self.ui.slicer_plotter.render()
 
     def run_slicer_tool(self, operation):
@@ -208,10 +209,11 @@ class SlicerToolsMixin:
                 style = self._style_for(self.ui.tbl_parts, row)
                 for index, offset in enumerate(offsets, 1):
                     mesh = source['mesh'].copy()
-                    mesh.apply_translation(offset)
                     from part_supports import transformed
                     matrix = np.eye(4)
                     matrix[:3, 3] = offset
+                    from cad_state import apply_cad_transform
+                    apply_cad_transform(mesh, matrix)
                     children = transformed(source.get('supports', []), matrix)
                     from uuid import uuid4
                     for child in children: child['id'] = str(uuid4())
@@ -219,7 +221,8 @@ class SlicerToolsMixin:
         else:
             for row, matrix in self.matrices_for(operation, params, rows).items():
                 mesh = self.slicer_parts[row]['mesh'].copy()
-                mesh.apply_transform(matrix)  # Trimesh also reverses winding after a reflection.
+                from cad_state import apply_cad_transform
+                apply_cad_transform(mesh, matrix)
                 from part_supports import transformed
                 children = transformed(self.slicer_parts[row].get('supports', []), matrix)
                 if params.get('create_copy'):

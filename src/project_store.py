@@ -48,7 +48,7 @@ def validate_mesh(mesh):
 def load_mesh(path, step_deflection=0.05, step_angle=0.25):
     if Path(path).suffix.lower() in (".step", ".stp"):
         from cad_import import load_step
-        return validate_mesh(load_step(path, linear_deflection=step_deflection, angular_deflection=step_angle))
+        return validate_mesh(load_step(path, linear_deflection=step_deflection, angular_deflection=step_angle, native=False))
     return validate_mesh(trimesh.load(path, force="mesh"))
 
 

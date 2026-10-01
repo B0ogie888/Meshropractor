@@ -150,6 +150,8 @@ class SupportTools:
                 groups = window.slicer_parts[row].setdefault('supports', [])
                 group = make_group(result['mesh'], result.get('surface_faces', []), result.get('kind', 'Точечные'),
                                    result.get('params', self.params), result['contacts'])
+                from cad_supports import bind_support_surface
+                bind_support_surface(group, window.slicer_parts[row]['mesh'])
                 replace_id = result.get('replace_id')
                 if replace_id:
                     index = next(i for i, item in enumerate(groups) if item['id'] == replace_id)

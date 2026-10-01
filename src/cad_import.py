@@ -6,7 +6,36 @@ import numpy as np
 import trimesh
 
 
-def load_step(path, linear_deflection=0.05, angular_deflection=0.25):
+def load_step(path, linear_deflection=0.05, angular_deflection=0.25, *, native=True,
+              progress=None, cancelled=None):
+    """Import a mesh proxy and, by default, its reusable native CAD geometry.
+
+    ``native=False`` retains the earlier mesh-only contract. Existing callers
+    still receive an ordinary Trimesh, with the same units and mesh metadata.
+    """
+    if not isinstance(native, (bool, np.bool_)):
+        raise ValueError('Режим CAD должен быть логическим значением.')
+    if cancelled and cancelled():
+        raise InterruptedError('Импорт CAD отменён.')
+    if not native:
+        mesh = _load_step_mesh_only(path, linear_deflection, angular_deflection)
+        if cancelled and cancelled():
+            raise InterruptedError('Импорт CAD отменён.')
+        return mesh
+    try:
+        from cad_geometry import _precision, _read_step, _serialize, _from_brep
+        linear, angular = _precision(linear_deflection, angular_deflection)
+        shape, labels = _read_step(path, progress, cancelled)
+        metadata = dict(source_name=Path(path).name, source_path=str(Path(path).resolve()))
+        if len(labels) == 1 and labels[0].get('color') is not None:
+            metadata['cad_color'] = labels[0]['color']
+        return _from_brep(_serialize(shape), linear, angular, metadata=metadata, labels=labels,
+                          progress=progress, cancelled=cancelled)
+    except ImportError as exc:
+        raise ImportError('Для STEP установите зависимости проекта: python -m pip install -r requirements.txt') from exc
+
+
+def _load_step_mesh_only(path, linear_deflection=0.05, angular_deflection=0.25):
     if not math.isfinite(linear_deflection) or linear_deflection <= 0:
         raise ValueError("Точность триангуляции должна быть положительной (мм).")
     if not math.isfinite(angular_deflection) or not 0 < angular_deflection < math.pi:
@@ -69,7 +98,7 @@ def load_step(path, linear_deflection=0.05, angular_deflection=0.25):
     while solids.More():
         body_count += 1
         solids.Next()
-    mesh.metadata.update(source_format="STEP", source_name=Path(path).name, units="mm",
+    mesh.metadata.update(source_format="STEP", source_name=Path(path).name, source_path=str(Path(path).resolve()), units="mm",
                          linear_deflection_mm=float(linear_deflection), angular_deflection_rad=float(angular_deflection),
                          cad_face_count=face_count, cad_body_count=body_count)
     return mesh

@@ -143,7 +143,9 @@ class HistoryMixin:
 
     def update_history_actions(self):
         if not hasattr(self, 'history'): return
-        ready = self._job is None and getattr(self, "_transform_session", None) is None
+        ready = (self._job is None and getattr(self, "_transform_session", None) is None
+                 and getattr(self, '_repair_session', None) is None
+                 and getattr(self, '_placement_session', None) is None)
         pending = self._history_timer.isActive()
         self.ui.action_undo.setEnabled(ready and (self.history.index > 0 or pending))
         self.ui.action_redo.setEnabled(ready and not pending and self.history.index < len(self.history.entries) - 1)

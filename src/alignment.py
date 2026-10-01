@@ -186,7 +186,8 @@ def align_surfaces(cad, scan, cad_markers=(), scan_markers=(), settings=None,
     world[:3, 3] += target_center - world[:3, :3] @ source_center
     metrics["transform"] = world.tolist()
     result = scan.copy()
-    result.apply_transform(world)
+    from cad_state import apply_cad_transform
+    apply_cad_transform(result, world)
     result.metadata["alignment"] = metrics
     if ambiguous:
         log("[!] Несколько ориентаций дают близкий результат. Для симметричной детали уточните положение маркерами.")

@@ -76,5 +76,15 @@ def create_tools_ribbon():
         label.setStyleSheet('color: #aaa; font-size: 10px;')
         group.addWidget(label)
         layout.addLayout(group)
+    from cad_dialog import cad_icon
+    cad = QToolButton()
+    cad.setText('CAD / STEP')
+    cad.setIcon(cad_icon())
+    cad.setIconSize(QSize(28, 28))
+    cad.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+    cad.setToolTip('CAD-тела и поверхности: качество сетки, разделение тел, экспорт STEP')
+    cad.setStyleSheet('QToolButton {border: none; padding: 0 10px; color: #ddd;} QToolButton:hover {background: #444;}')
+    layout.addWidget(cad)
+    buttons['CAD / STEP'] = cad
     layout.addStretch()
     return container, buttons
