@@ -1,302 +1,216 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Meshropractor" width="112">
+</p>
+
 # Meshropractor
 
-[Русский](README_RU.md) · [Changelog](CHANGELOG.md) · [Validation notes (RU)](docs/VALIDATION.md)
+**CAD and mesh preparation for additive manufacturing, with scan-based geometry compensation.**
 
-Meshropractor is a desktop application for preparing 3D parts and compensating
-geometric deviations measured from scans. Version 0.2.5 brings together two workspaces:
+[![Tests](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml)
+[![Version](https://img.shields.io/badge/version-0.2.6-2563eb)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/platform-Windows_x64-475569)](#installation)
+[![Python](https://img.shields.io/badge/python-3.12-3776ab)](requirements.txt)
 
-- **Slicer:** STL/STEP import, part placement and transforms, section views, surface
-  selection, automatic and manual supports, and geometric measurements.
-- **Pre-deformation:** CAD/scan alignment, signed deviation maps, displacement-field
-  training and compensated geometry exported as STL.
+[Русский](README_RU.md) · [Releases](https://github.com/B0ogie888/Meshropractor/releases) · [User guide](docs/USER_GUIDE.md) · [Changelog](CHANGELOG.md)
 
-`.mrp` projects preserve geometry, results and settings, with session Undo/Redo.
-Machine-job CLS output remains experimental and unavailable from the interface.
-Capabilities and limitations are described below.
+Meshropractor brings part preparation and geometric compensation into one desktop
+application. Import STL or STEP, repair and arrange parts, select CAD surfaces for
+supports, then compare a nominal model with a scan and export compensated geometry.
 
-The interface uses PySide6 and PyVista/VTK; geometry calculations use Open3D and
-Trimesh, STEP import uses OpenCascade, and the deformation field uses PyTorch with
-Fourier features.
+Two workspaces share project storage and geometry tools:
+
+- **Slicer:** model preparation, build platforms, supports, sections and measurements.
+- **Pre-deformation:** CAD/scan alignment, deviation analysis and displacement-field training.
+
+## Contents
+
+- [Capabilities](#capabilities)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Controls](#controls)
+- [Formats](#formats)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Scope and limitations](#scope-and-limitations)
+- [Feedback and support](#feedback-and-support)
+
+## Capabilities
+
+| Area | What you can do |
+| --- | --- |
+| **Native CAD** | Retain STEP BREP bodies and faces, change tessellation quality, select whole CAD faces and export transformed CAD as STEP. |
+| **Mesh repair** | Diagnose boundaries, normals, fragments, overlaps and intersections; prepare automatic or manual repairs with preview and Undo/Redo. |
+| **Placement** | Move, rotate, scale, mirror and duplicate parts; arrange them on a platform or in its volume and compare orientations. |
+| **Supports** | Generate supports or define surface regions manually. Support groups belong to their part and follow its transforms. |
+| **Inspection** | Combine clipping planes, measure geometry and view live selected-part volume, material cost and packing statistics. |
+| **Compensation** | Align CAD and scan, build deviation maps, train a displacement field and export a compensated STL with independent XY/Z factors. |
+| **Projects** | Save models, BREP, supports, platforms and calculation results in `.mrp`; undo and redo changes during the session. |
 
 ## Installation
 
-For a packaged Windows build, use `Meshropractor-Setup-0.2.5-x64.exe` or copy the entire
-`dist\Meshropractor` folder including `_internal`; a separate Python installation is
-not required. For PyInstaller and Inno Setup packaging, see
-[Windows build instructions (RU)](docs/BUILD_WINDOWS.md). Source setup follows below.
+### Windows application
 
-On startup, the application checks this repository's stable GitHub releases for a newer
-Windows x64 installer. You choose whether to download it, with progress and cancellation,
-then separately confirm installation. Unsaved work can be saved before closing. After
-confirmation, installation runs automatically with visible progress and the normal Windows
-administrator prompt, then restarts Meshropractor without restarting Windows. Release versions
-come from the root `VERSION` file; publication instructions are in the build guide.
+Download a published Windows x64 installer from [Releases](https://github.com/B0ogie888/Meshropractor/releases).
+Packaged builds do not require a separate Python installation. A portable distribution
+uses the complete `dist\Meshropractor` folder, including `_internal`.
 
-Tested on Windows with Python 3.12. Direct dependencies are pinned in `requirements.txt`.
-NVIDIA GPU acceleration is optional; training falls back to CPU. Open3D raycasting
-runs on CPU in batches regardless of the PyTorch training device.
+The source version is **0.2.6**, defined in [VERSION](VERSION). Published installers may
+lag behind the source version. To build this version locally, follow the
+[Windows packaging guide](docs/BUILD_WINDOWS.md) (Russian).
+
+At startup, the application checks stable releases for updates. Downloading shows
+progress and can be canceled; installation requires a separate confirmation.
+
+### Run from source
+
+The tested environment is **Windows x64 and Python 3.12**. A CUDA-capable NVIDIA GPU
+is optional; training also runs on CPU. Dependencies are pinned in [requirements.txt](requirements.txt).
+
+From PowerShell:
 
 ```powershell
 git clone https://github.com/B0ogie888/Meshropractor.git
 cd Meshropractor
 py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
 ```
 
-Install either the CUDA 12.1 build:
+Install **one** PyTorch build:
 
 ```powershell
-python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+# CPU
+.\.venv\Scripts\python.exe -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
 ```
 
-Or the CPU build:
+Or, for NVIDIA CUDA 12.1:
 
 ```powershell
-python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Then install the remaining dependencies and launch:
+Install the remaining dependencies and launch:
 
 ```powershell
-python -m pip install -r requirements.txt
-python src/Meshropractor.py
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe src/Meshropractor.py
 ```
 
-## Workflow
+## Quick start
 
-The **Placement** ribbon has 13 tools: precise transforms, mouse dragging, face
-orientation, 2D/3D platform packing, orientation search and comparison, bounding-box
-minimization, platform fitting without scaling, and orientation transfer to similar
-parts. Background preparation, previews and Undo/Redo preserve the source meshes;
-packing accounts for supports, existing parts and excluded zones.
-See [placement commands and limitations](docs/PLACEMENT.md).
+### Prepare a part
 
-The **Repair** ribbon provides 25 commands with individual icons: automatic repair,
-normals, stitching, holes, duplicates and overlap detection, component separation and
-Boolean union, manual triangles/bridges, plane clipping, vertex movement, reduction,
-smoothing and remeshing. Operations use checked parts and prepare a background preview;
-Apply commits a single undoable change. Pick vertices/faces in the scene or drag a vertex.
-Wrapping and remeshing are approximate and require visual review before applying.
-See the [command reference and limitations](docs/MESH_REPAIR.md).
+1. Open the **Slicer** workspace and create a build platform with the required dimensions.
+2. Import a model or drag STL/STEP files into the active viewport. For STEP, choose native BREP or a mesh and set tessellation tolerances.
+3. Select parts in the scene. Use **Repair** for diagnostics and **Placement** for transforms or automatic arrangement.
+4. Select surfaces and generate supports, or configure regions through **Manual Supports**.
+5. Inspect sections and measurements, save the `.mrp` project and export the selected geometry.
 
-The **Repair wizard** is available from the slicer’s Repair tab and beside CAD/scan
-import in Predeformation. Its dropdown includes every loaded part, child support group,
-CAD, scan and result. Full analysis reports open boundaries, nonmanifold edges/vertices,
-duplicate/degenerate faces, fragments, coplanar area overlaps and transverse intersections.
-Counts use our own geometric criteria and need not match Magics.
+### Compensate measured deviations
 
-Full repair runs in a cancellable local helper process, with optional quadric reduction
-of overly dense meshes (about 400,000 faces by default). The result is independently
-rechecked and compared with the original in both directions using every vertex plus
-area-sampled surface points. Application is blocked if the measured distance exceeds
-the configured tolerance (default 0.05 mm); this is a sampled estimate, not a certified
-Hausdorff bound. Review/export the report and repaired copy before applying. Full repair
-can close intentionally open surfaces and requires confirmation. Original files remain
-unchanged; applying to one model supports undo. Full analysis of a multi-million-face STL
-can take over ten minutes. See [repair details](docs/MESH_REPAIR.md) and the
-[independent helper source/license](licenses/repair-engine/README.md).
+1. Open **Pre-deformation**, load nominal CAD (STL/STEP) and a scan (STL).
+2. Align automatically or specify at least three non-collinear marker pairs.
+3. Build a deviation map and review alignment quality and coverage.
+4. Configure training and compensation factors, calculate the result and export it as STL.
 
-Before loading, choose whether to run diagnostics and prepare repair, or import directly
-without either step. Repair settings offer one to three passes and a hole diameter limit
-(0.1 mm by default). Progress appears in the status bar/log; cancellation is checked
-between stages and boundary components. Review the before/after counts before applying,
-keeping the original mesh or canceling import. Repair welds coincident vertices
-at 0.000001 mm precision and removes duplicate/degenerate faces. CAD and slicer parts
-also receive caps for small planar convex holes: passes handle up to 4, 12 and 32 boundary
-edges within the chosen diameter, stopping early when the mesh becomes closed;
-scan boundaries are preserved. Larger/complex gaps, incorrect normals and self-intersections
-are not automatically repaired by this mode. The source file is untouched and repair is
-a separate Undo/Redo step. CAD from existing projects is reviewed before a deviation map
-unless already reviewed in the session. A prompt precedes that work too: skip repair to
-continue the map immediately, or cancel the calculation.
+See the [user guide](docs/USER_GUIDE.md) for tool parameters, repair review and result interpretation.
 
-While rotating large models (100,000 faces or more), edge overlays are temporarily hidden
-and restored on release. Geometry is not decimated. Static scenes render on changes and
-the view cube renders in the same frame as the scene without a separate native window. See [performance measurements (RU)](docs/PERFORMANCE.md).
+## Controls
 
-1. Create a deformation project. CAD accepts STL/STEP/STP; scans accept STL.
-   STEP units are converted to mm, with selectable tessellation deflection (default
-   0.05 mm) and angular deflection in degrees (default about 14.324°), in the same dialog.
-   Assembly bodies become a combined mesh with their placements preserved.
-   STL coordinates are interpreted as mm; their units are not detected automatically.
-2. Align automatically or place at least three non-collinear marker pairs. Registration
-   uses area samples and closest CAD triangle points. Adjust the capture tolerance and
-   minimum scan area fraction; results include inlier RMSE and whole-sample P95.
-   Medium/long searches test 24 PCA orientations plus a local-feature candidate. Symmetric
-   orientation ambiguity is reported; markers can resolve it. Cancellation is available.
-3. Generate a deviation map. Closed CAD uses inside/outside signs; open CAD uses
-   closest-surface distance signed by the CAD face normal, with a notice in the log.
-   This local sign can be ambiguous near gaps and sharp edges. Scans may be open.
-   Select a map in the
-   table before placing measurement callouts.
-4. Choose the network, surface sample count, deviation search limit and minimum
-   coverage. Sampling affects training; disabling sampling uses the CAD vertices.
-5. Calculate deformation or compensation with independent XY/Z factors.
-6. Select a result to export to STL. Arrows show the actual applied displacement.
-   Coverage, holdout RMSE and maximum distance to a confirmed measurement are shown
-   below the results table.
+These selection gestures apply to the slicer's **part selection** mode:
 
-Only one background operation runs at a time. Cancellation waits for the current
-native geometry step rather than forcibly terminating a thread. Closing the window
-waits for the task to stop.
+| Gesture | Action |
+| --- | --- |
+| Left-click a part / empty space | Select a part / clear all part selection. |
+| Drag from empty space | Select parts with a rectangle. |
+| Shift / Ctrl + click or rectangle | Add parts / toggle part selection. |
+| Double-click a part / empty space | Orbit around the part / return to the build-plate center. |
+| Alt + left-drag | Rotate the camera, including from empty space. |
+| Click a view-cube face | Align the camera to that face. |
+| Ctrl+S | Save the project. |
+| Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z | Undo / redo. |
 
-## Display settings and help
+Surface-selection tools use **Ctrl to subtract faces**. Full controls are available
+in **Settings and Help → Keyboard shortcuts and controls** and the [user guide](docs/USER_GUIDE.md).
 
-The slicer's Settings and Help ribbon provides display preferences, keyboard shortcuts,
-help, application information and a manual update check. Preferences include the scene
-background, edge anti-aliasing (MSAA ×4 by default, ×8, FXAA or off) and hiding dense-mesh
-edges during camera interaction. They persist between sessions and apply to both workspaces.
-Anti-aliasing does not change geometry; smoother CAD silhouettes require finer tessellation
-at import. The view cube's colored axes remain attached to one corner while rotating.
+## Formats
 
-## Slicer sections
+| Format | Import | Export / storage |
+| --- | --- | --- |
+| **STL** | Slicer parts, nominal CAD and scans. Coordinates are interpreted as millimeters. | Parts with supports and deformation/compensation results. |
+| **STEP / STP** | Native CAD bodies and faces, or a triangulated mesh; file units convert to millimeters. | Selected CAD bodies with their transforms while BREP remains valid. |
+| **MRP 2.1** | Saved projects, including older 1.x and 2.0 archives. | Geometry, BREP, supports, platforms, results and settings. |
+| **VTP / PNG** | — | Section contours / scene images. |
 
-The viewport toolbar selects triangles, connected planes, smooth patches, connected
-shells, a surface brush or visible cells inside a rectangle. First select the target
-parts. Selected faces are orange and follow clipping planes; Shift adds, Ctrl removes,
-Alt allows camera navigation and Esc resets the tool. Face selection is temporary.
-Click a part to select it; Shift/Ctrl modify part selection. Unload and selected export
-use checked parts in the current scene. Right-click opens a radial move/rotate/export/
-unload menu, while a right-button drag retains camera navigation. Unload supports undo.
+Mesh edits can invalidate BREP. Supports and compensated results are triangle meshes;
+STEP export preserves the nominal CAD rather than converting those meshes to CAD.
 
-The Supports ribbon generates columns or branching supports, places individual manual
-contacts and previews downward overhang faces. Parameters include angle, spacing,
-shaft/contact/foot sizes and platform Z. Selected faces can restrict the generated area.
-Supports stop at the nearest surface below, or skip obstructed contacts in platform-only
-mode. Support groups belong to their source part, follow its transforms and copies,
-and participate in project saving, combined STL export and undo. The branching algorithm is original, not Materialise e-Stage;
-branches contain intersecting closed bodies without a Boolean union. Ray checks do not
-constitute full volumetric collision checks or print-process/strength validation.
+## Documentation
 
-Window dragging/resizing uses the native system loop for Windows Snap when enabled in
-Windows settings. Double-click the title bar to maximize/restore. A status-bar Cancel
-button is available during background jobs.
-
-Manual Supports replaces the left pane with a part selector, a list of surface regions,
-support types, a XY plan and editable parameters/profiles. Select faces, add a region and
-rebuild its geometry. Available patterns are grid walls, walls along X, columns, diagonal
-braces, perimeter contacts, truncated cones and branches. Groups can be hidden or deleted.
-Choose None to keep the region without support geometry. Existing detached support parts
-in older projects remain detached because those files contain no reliable parent link.
-
-The view cube in both workspaces uses pale faces and thin edges without a rectangular
-panel covering the viewport. Clicking a face aligns the camera; double-click restores
-an isometric view. The platform becomes 88% transparent with the camera below Z=0.
-Measurements cover point distances and XYZ deltas, distance to a face's extended plane
-or to the closest point of a part, parallel plane distances, three-point circles and
-point/plane angles. Results appear in the pane and scene and can be copied or hidden.
-Measurements are temporary and cleared on geometry changes; they use the triangle mesh,
-not analytical CAD surfaces.
-
-Import STL/STEP/STP through Import Part or drag files from Explorer into the active
-viewport. The STEP dialog offers CAD/BREP or a plain STL mesh, with tessellation quality.
-In navigation mode, double-click a part to orbit around its center; double-click empty
-space to return to the build-plate center. Table selection does not change the pivot.
-Use Alt + double-click while selecting surfaces or measuring.
-Enable XY/XZ/YZ or arbitrary planes in the
-Sections panel; up to six half-spaces can be combined. Choose the removed side (+/−),
-position and step in mm. Move with the slider, step buttons or the interactive plane
-(«Указать»); arbitrary planes can also rotate. «Выровнять» aligns the camera and
-«Экспорт» exports the selected plane's contours of visible parts as VTP.
-
-Clipping affects display only, preserving the original mesh and STL exports. No artificial
-caps are generated. Planes are saved in `.mrp`; build platforms remain unclipped.
-
-### Native CAD / STEP
-
-STEP imports retain BREP by default. The slicer can import bodies as separate parts;
-predeformation keeps an assembly together as the nominal CAD model. Select complete
-CAD faces using the CAD button above the scene and generate supports owned by that part.
-The CAD / STEP panel offers retessellation, body separation, exact CAD properties,
-STEP export and explicit conversion to mesh. Placement, duplication, scaling and mirroring
-retain BREP; mesh edits invalidate it and prevent exporting stale CAD. Projects embed
-the BREP source. Calculations and supports use a mesh at the chosen tolerance.
-See [CAD workflow and limitations](docs/CAD.md).
-
-### Display ribbon
-
-25 functional commands cover camera views, smooth shading, simplified display, grids,
-rulers, zones, bounds, mass centers, labels, colors, overhangs, geometric checks,
-volume/material/packing estimates, PNG export, clipboard and printing. The three
-statistics commands form a vertical list and update the top-right overlay for selected
-parts and their supports. Set material density and price using the cost button's arrow.
-Click a part to select it, click empty space to clear selection, or drag a rectangle
-from empty space to select several parts. Shift adds, Ctrl toggles, and Alt lets you
-rotate the scene from empty space. Display toggles
-do not modify source geometry. Geometric checks are not a print simulation.
-See [Display commands](docs/DISPLAY.md).
-
-Click a plane's cell to choose the row controlled by the slider. Hover does not change
-the selected row; wheel events on unfocused fields do not edit another plane.
-
-## Slicer tools and history
-
-The Tools ribbon offers box/cylinder/sphere creation, duplication, XYZ copy arrays,
-translation, rotation in degrees, scaling and mirroring. Check the parts in the current
-scene's selection column. Rotations use world X, then Y, then Z; rotation/scale/mirror
-can use group/individual/custom centers. Transform dialogs are modeless: Apply records
-one history step and stays open, Yes applies and closes, Close discards only unapplied
-preview. Create Copy preserves originals. Copy arrays preserve the
-original cell and use explicit XYZ pitch (no collision-free packing).
-
-Move supports linked absolute/relative coordinates, per-axis min/center/max/custom
-anchors, individual origins, return to the opening position and two-point line constraints.
-Rotation supports arbitrary lines, surface-picked centers and angular snapping on its
-3D handles. Scale links factors, final dimensions and differences, with uniform scaling,
-two-point measurement fitting and a persistent editable preset library. Mirror supports
-principal or three-point/point-normal planes. Rotation and scale can preserve each part's
-minimum Z. Points are picked on original surfaces; preview is temporarily hidden while
-picking. Other project mutations and Undo/Redo are locked until the panel closes.
-The Home ribbon now uses command icons above its labels.
-
-Undo (`Ctrl+Z`) and Redo (`Ctrl+Y` / `Ctrl+Shift+Z`) restore project geometry, calculations,
-markers and settings, including sections. Tool operations are atomic history steps.
-Rapid field/slider edits coalesce until a 300 ms pause. History is session-local and
-resets on New/Open; saving records a clean-state marker. Up to 30 steps are retained,
-with a 256 MB geometry budget except for the current and immediately previous states.
-Unchanged meshes share snapshot storage. Background jobs temporarily disable history.
-
-## Projects
-
-`Ctrl+S` saves the current project; Save As chooses a new path. A title-bar asterisk
-indicates unsaved changes. The application offers to save before replacing a project
-or closing the window.
-
-`.mrp` 2.1 stores all results, deviation maps, vectors, markers, callouts, calculation
-and display settings, slicer parts and platforms. Numeric arrays preserve vertex
-indices and precision without an intermediate STL conversion. Saving replaces the
-destination atomically. Invalid project files leave the current project intact.
-Version 1.x and 2.0 projects can be opened; new saves use 2.1 and cannot be opened by older apps.
-
-## Scope and limitations
-
-STL/STEP import, STL export, section clipping, alignment, deviation analysis, neural compensation, scene/platform
-management, Undo/Redo and project persistence are available. Separate report and
-inspection modules, unimplemented ribbon commands and desktop CLS export are disabled.
-The experimental CLS writer has not been validated against production machines.
-Keep-out zones are visual guides; collision enforcement is not implemented.
-
-The network fits observed geometry displacement; it is not a physical printing
-simulation. Coverage is the fraction of rays with a valid hit, not a confidence
-probability. Holdout RMSE does not guarantee manufacturing tolerances. Result checks
-reject collapsed/inverted triangles and self-intersections. Large-part performance
-and production accuracy require representative CAD/scan benchmarks.
+| Guide | Topics | Language |
+| --- | --- | --- |
+| [User guide](docs/USER_GUIDE.md) | Workflows, supports, measurements, transforms and project history. | English |
+| [Руководство пользователя](docs/USER_GUIDE_RU.md) | Полное описание рабочих инструментов. | Русский |
+| [CAD / STEP](docs/CAD.md) | Bodies, faces, BREP, tessellation and STEP export. | Русский |
+| [Mesh repair](docs/MESH_REPAIR.md) | Diagnostics, repair commands, tolerances and result review. | Русский |
+| [Placement](docs/PLACEMENT.md) | Arrangement, orientation search and packing criteria. | Русский |
+| [Display](docs/DISPLAY.md) | Sections, scene annotations and statistics. | Русский |
+| [Validation](docs/VALIDATION.md) | Tests, native scene checks and accuracy interpretation. | Русский |
+| [Performance](docs/PERFORMANCE.md) | Rendering changes and benchmark methodology. | Русский |
+| [Windows build](docs/BUILD_WINDOWS.md) | PyInstaller, Inno Setup and release packaging. | Русский |
 
 ## Development
 
+After setting up the source environment, run the regression suite:
+
 ```powershell
-python -m unittest discover -s tests -v
-python scripts/smoke_desktop.py --sections --tools
-python -m pip install -r requirements-dev.txt
-python -m PyInstaller Meshropractor.spec
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The smoke script briefly opens a real Windows/OpenGL scene and writes screenshots
-under `output/`. Controller tests run with real Qt/VTK objects and a non-rendering
-plotter substitute for headless CI.
+Native scene checks briefly open an application window and save reports and images in `output/`:
 
-`project_store.py` owns archive validation and serialization; `project_controller.py`
-and `background_tasks.py` coordinate lifecycle and jobs. `geometry_analysis.py`,
-`ml_deformation.py` and `Workers_Meshropractor.py` implement calculations.
+```powershell
+.\.venv\Scripts\python.exe scripts/smoke_cad_display.py
+.\.venv\Scripts\python.exe scripts/smoke_selection_statistics.py
+```
 
-[Support the author on Boosty](https://boosty.to/boogie888) · Contact: theboogie888@gmail.com
+Version 0.2.6 passed **345 local regression tests**, plus frozen startup and bundled
+STEP/repair checks. GitHub Actions runs the regression suite on Windows; its current
+status appears in the badge above. Test scope is documented in [Validation](docs/VALIDATION.md).
+
+| Location | Responsibility |
+| --- | --- |
+| `src/` | Qt/VTK interface, CAD and mesh operations, background jobs and compensation. |
+| `tests/` | Geometry, controller and UI regression tests. |
+| `scripts/` | Native scene checks and performance profiling. |
+| `docs/` | User and developer documentation. |
+| `assets/` | Application icons and resources. |
+| `licenses/repair-engine/` | Independent repair helper sources and license notices. |
+
+For packaging, install [requirements-dev.txt](requirements-dev.txt):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
+Build the repair helper before the application; exact commands are in the
+[build guide](docs/BUILD_WINDOWS.md).
+
+## Scope and limitations
+
+- BREP is preserved for CAD operations; alignment, supports, measurements and deviation calculations use its tessellation.
+- Packing uses conservative bounding boxes. Support geometry and compensation require review against the intended printing process.
+- Compensation fits measured displacement; it does not simulate printing physics. Reported metrics do not certify manufacturing tolerances.
+- Desktop CLS machine-job export remains disabled pending equipment validation. This application is not a complete Materialise Magics replacement.
+
+Algorithm-specific limits are described in the linked guides. License and source
+notices for the independent repair helper are in [licenses/repair-engine](licenses/repair-engine/README.md).
+
+## Feedback and support
+
+Report a bug or propose a feature through [GitHub Issues](https://github.com/B0ogie888/Meshropractor/issues).
+For bugs, include the application version, steps to reproduce, expected behavior and
+the relevant log excerpt.
+
+Windowed builds write logs to `%LOCALAPPDATA%\Meshropractor\logs\Meshropractor.log`.
+For a code change, describe the problem and validation in a pull request.
+
+[Support the author on Boosty](https://boosty.to/boogie888) · [Email](mailto:theboogie888@gmail.com)
