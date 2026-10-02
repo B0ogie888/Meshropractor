@@ -1,6 +1,8 @@
 # Tested together with Python 3.12 on Windows. Install the desired Torch wheel first.
 PySide6==6.11.0
 trimesh==4.11.5
+# Trimesh plane slicing imports its polygon helpers even when cap=False.
+shapely==2.1.2
 manifold3d==3.5.4
 scipy==1.17.1
 numpy==2.4.4
