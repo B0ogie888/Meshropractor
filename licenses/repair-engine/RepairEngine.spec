@@ -5,9 +5,10 @@ import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
-windows = Path(os.environ.get('SystemRoot', r'C:\Windows'))
-os.environ['PATH'] = os.pathsep.join((str(Path(sys.executable).parent), sys.base_prefix,
-                                    str(windows / 'System32'), str(windows)))
+if sys.platform == 'win32':
+    windows = Path(os.environ.get('SystemRoot', r'C:\Windows'))
+    os.environ['PATH'] = os.pathsep.join((str(Path(sys.executable).parent), sys.base_prefix,
+                                        str(windows / 'System32'), str(windows)))
 datas, binaries, hiddenimports = collect_all('pymeshfix')
 datas += [('licenses/repair-engine', 'licenses'), ('src/repair_engine_cli.py', 'source')]
 a = Analysis(['src/repair_engine_cli.py'], pathex=['src'], binaries=binaries,

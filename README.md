@@ -9,6 +9,7 @@
 [![Tests](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml)
 [![Version](https://img.shields.io/badge/version-0.2.6-2563eb)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows_x64-475569)](#installation)
+[![Linux](https://img.shields.io/badge/Linux-amd64-FCC624?logo=linux&logoColor=black)](#linux-application)
 [![Python](https://img.shields.io/badge/python-3.12-3776ab)](requirements.txt)
 
 [Русский](README_RU.md) · [Releases](https://github.com/B0ogie888/Meshropractor/releases) · [User guide](docs/USER_GUIDE.md) · [Changelog](CHANGELOG.md)
@@ -58,12 +59,31 @@ The source version is **0.2.6**, defined in [VERSION](VERSION). Published instal
 lag behind the source version. To build this version locally, follow the
 [Windows packaging guide](docs/BUILD_WINDOWS.md) (Russian).
 
-At startup, the application checks stable releases for updates. Downloading shows
+On Windows, the application checks stable releases for updates at startup. Downloading shows
 progress and can be canceled; installation requires a separate confirmation.
+
+### Linux application
+
+Version **0.2.6** also builds as `meshropractor_0.2.6_amd64.deb` for **Debian 12 and
+Ubuntu 24.04, x86-64**. Python and the application dependencies are included;
+the package uses CPU PyTorch. The desktop session needs OpenGL and X11, or XWayland
+under Wayland.
+
+Install a built package from its directory:
+
+```bash
+sudo apt install ./meshropractor_0.2.6_amd64.deb
+meshropractor
+```
+
+It also appears in the application menu. Linux updates are installed through APT;
+the update button opens the release page. See the [Linux packaging guide](docs/BUILD_LINUX.md)
+(Russian) for building the package with Docker and validating it in a clean system.
+Published release assets may lag behind the available source builds.
 
 ### Run from source
 
-The tested environment is **Windows x64 and Python 3.12**. A CUDA-capable NVIDIA GPU
+Source checks cover **Windows x64 and Debian 12 with Python 3.12**. A CUDA-capable NVIDIA GPU
 is optional; training also runs on CPU. Dependencies are pinned in [requirements.txt](requirements.txt).
 
 From PowerShell:
@@ -92,6 +112,15 @@ Install the remaining dependencies and launch:
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe src/Meshropractor.py
+```
+
+On Linux with Python 3.12 and the Qt/OpenGL system libraries installed:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python src/Meshropractor.py
 ```
 
 ## Quick start
@@ -156,6 +185,7 @@ STEP export preserves the nominal CAD rather than converting those meshes to CAD
 | [Validation](docs/VALIDATION.md) | Tests, native scene checks and accuracy interpretation. | Русский |
 | [Performance](docs/PERFORMANCE.md) | Rendering changes and benchmark methodology. | Русский |
 | [Windows build](docs/BUILD_WINDOWS.md) | PyInstaller, Inno Setup and release packaging. | Русский |
+| [Linux build](docs/BUILD_LINUX.md) | Debian/Ubuntu `.deb`, Docker builds and clean installation checks. | Русский |
 
 ## Development
 
@@ -181,6 +211,7 @@ status appears in the badge above. Test scope is documented in [Validation](docs
 | `src/` | Qt/VTK interface, CAD and mesh operations, background jobs and compensation. |
 | `tests/` | Geometry, controller and UI regression tests. |
 | `scripts/` | Native scene checks and performance profiling. |
+| `packaging/linux/` | Linux build environment, Debian package and clean installation checks. |
 | `docs/` | User and developer documentation. |
 | `assets/` | Application icons and resources. |
 | `licenses/repair-engine/` | Independent repair helper sources and license notices. |
@@ -192,7 +223,7 @@ For packaging, install [requirements-dev.txt](requirements-dev.txt):
 ```
 
 Build the repair helper before the application; exact commands are in the
-[build guide](docs/BUILD_WINDOWS.md).
+[Windows](docs/BUILD_WINDOWS.md) and [Linux](docs/BUILD_LINUX.md) build guides.
 
 ## Scope and limitations
 

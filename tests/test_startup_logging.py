@@ -50,6 +50,20 @@ print('console preserved')
             self.assertIn('console preserved', result.stdout)
             self.assertFalse((Path(folder) / 'Meshropractor.log').exists())
 
+    def test_frozen_linux_desktop_logs_to_xdg_state_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            result = self.run_script(folder, '''
+import os
+os.environ['XDG_STATE_HOME'] = str(folder)
+sys.platform = 'linux'
+sys.frozen = True
+assert configure_windowed_logging() == folder / 'Meshropractor/logs/Meshropractor.log'
+print('desktop launch diagnostics')
+''')
+            self.assertEqual(result.stdout, '')
+            self.assertIn('desktop launch diagnostics',
+                          (Path(folder) / 'Meshropractor/logs/Meshropractor.log').read_text())
+
     def test_only_the_missing_stream_is_replaced(self):
         with tempfile.TemporaryDirectory() as folder:
             self.run_script(folder, '''

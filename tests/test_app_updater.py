@@ -34,7 +34,7 @@ class InstallerLauncherTests(unittest.TestCase):
         mock_loader = patch('app_updater.ctypes.windll', windll, create=True)
         mock_loader.start()
         self.addCleanup(mock_loader.stop)
-        platform = patch('app_updater.sys.platform', 'win32')
+        platform = patch('app_updater.sys', SimpleNamespace(platform='win32'))
         platform.start()
         self.addCleanup(platform.stop)
 
@@ -96,6 +96,9 @@ class UpdaterWindow(QMainWindow):
 
 class UpdaterTestBase(unittest.TestCase):
     def setUp(self):
+        platform = patch('app_updater.sys', SimpleNamespace(platform='win32'))
+        platform.start()
+        self.addCleanup(platform.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)

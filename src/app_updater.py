@@ -3,7 +3,8 @@ import ctypes
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal, QStandardPaths, Qt
+from PySide6.QtCore import QObject, QThread, QTimer, Signal, QStandardPaths, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from app_version import APP_VERSION
@@ -76,7 +77,7 @@ class UpdateController(QObject):
 
     def start(self):
         """Called once by the application entry point, after closing the splash."""
-        if not self.closed: self.start_timer.start(1800)
+        if not self.closed and sys.platform == 'win32': self.start_timer.start(1800)
 
     def manual_check(self):
         if self.ready and self.available:
@@ -86,6 +87,12 @@ class UpdateController(QObject):
 
     def check(self, manual=False):
         if self.closed: return
+        if sys.platform != 'win32':
+            if manual:
+                QDesktopServices.openUrl(QUrl('https://github.com/B0ogie888/Meshropractor/releases'))
+                self.window.log('[i] Linux: скачайте новый пакет .deb со страницы релизов '
+                                'и установите его через менеджер пакетов.')
+            return
         self.start_timer.stop()
         if self.worker:
             self.manual = self.manual or manual

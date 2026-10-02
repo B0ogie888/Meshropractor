@@ -1,4 +1,4 @@
-"""Keep diagnostics available when Windows starts the GUI without a console."""
+"""Keep diagnostics available when a desktop starts the GUI without a console."""
 import faulthandler
 import logging
 import os
@@ -14,12 +14,18 @@ def configure_windowed_logging(directory=None):
     An existing terminal, IDE or redirected stream is deliberately preserved.
     The real file stream also supports ``fileno``/``buffer`` used by libraries.
     """
-    if sys.stdout is not None and sys.stderr is not None:
+    desktop_linux = (sys.platform == 'linux' and getattr(sys, 'frozen', False)
+                     and '--self-test' not in sys.argv)
+    if sys.stdout is not None and sys.stderr is not None and not desktop_linux:
         return None
 
-    primary = Path(directory) if directory is not None else (
-        Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
-        / 'Meshropractor' / 'logs')
+    if directory is not None:
+        primary = Path(directory)
+    elif sys.platform == 'linux':
+        primary = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'Meshropractor/logs'
+    else:
+        primary = (Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData/Local')
+                   / 'Meshropractor/logs')
     fallback = Path(tempfile.gettempdir()) / 'Meshropractor' / 'logs'
     log_file = None
     header = (f'\n--- Meshropractor startup {datetime.now().isoformat(timespec="seconds")} '
@@ -49,9 +55,9 @@ def configure_windowed_logging(directory=None):
         # A read-only/full profile must not prevent the GUI from starting.
         stream = open(os.devnull, 'w', encoding='utf-8', buffering=1)
 
-    if sys.stdout is None:
+    if sys.stdout is None or desktop_linux:
         sys.stdout = stream
-    if sys.stderr is None:
+    if sys.stderr is None or desktop_linux:
         sys.stderr = stream
     logging.basicConfig(stream=sys.stderr,
                         format='%(asctime)s %(levelname)s %(name)s: %(message)s')

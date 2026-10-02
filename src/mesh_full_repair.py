@@ -16,7 +16,8 @@ def run_engine(source, passes, progress, cancelled, target_faces=0):
         root = Path(folder)
         np.savez(root/'input.npz', vertices=source.vertices, faces=source.faces)
         if getattr(sys, 'frozen', False):
-            command = [str(Path(sys._MEIPASS)/'repair_engine'/'MeshRepairEngine.exe')]
+            helper = 'MeshRepairEngine.exe' if sys.platform == 'win32' else 'MeshRepairEngine'
+            command = [str(Path(sys._MEIPASS) / 'repair_engine' / helper)]
         else:
             command = [sys.executable, '-u', str(Path(__file__).with_name('repair_engine_cli.py'))]
         command += ['--input', str(root/'input.npz'), '--output', str(root/'output.npz'), '--passes', str(passes), '--target-faces', str(target_faces)]

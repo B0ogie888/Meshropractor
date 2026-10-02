@@ -2016,6 +2016,10 @@ class MainWindow(ProjectController):
             self.ui.sb_factor_z.setValue(val)
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == '--self-test':
+        from frozen_smoke import run
+        run(sys.argv[2])
+        sys.exit(0)
     app = QApplication(sys.argv)
     from app_version import APP_VERSION
     app.setApplicationName('Meshropractor')

@@ -9,6 +9,7 @@
 [![Тесты](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml)
 [![Версия](https://img.shields.io/badge/version-0.2.6-2563eb)](CHANGELOG.md)
 [![Платформа](https://img.shields.io/badge/platform-Windows_x64-475569)](#установка)
+[![Linux](https://img.shields.io/badge/Linux-amd64-FCC624?logo=linux&logoColor=black)](#приложение-для-linux)
 [![Python](https://img.shields.io/badge/python-3.12-3776ab)](requirements.txt)
 
 [English](README.md) · [Релизы](https://github.com/B0ogie888/Meshropractor/releases) · [Руководство](docs/USER_GUIDE_RU.md) · [История изменений](CHANGELOG.md)
@@ -59,12 +60,31 @@ Meshropractor объединяет подготовку деталей и ком
 Опубликованные установщики могут отставать от исходников. Для локальной сборки этой
 версии используйте [инструкцию PyInstaller и Inno Setup](docs/BUILD_WINDOWS.md).
 
-При запуске приложение проверяет стабильные релизы на обновления. Скачивание
+В Windows при запуске приложение проверяет стабильные релизы на обновления. Скачивание
 показывает прогресс и допускает отмену; установка требует отдельного подтверждения.
+
+### Приложение для Linux
+
+Версия **0.2.6** также собирается в `meshropractor_0.2.6_amd64.deb` для
+**Debian 12 и Ubuntu 24.04, x86-64**. Python и зависимости приложения включены
+в пакет; используется CPU-версия PyTorch. Для графики нужны OpenGL и X11
+либо XWayland в сеансе Wayland.
+
+Установите собранный пакет из его каталога:
+
+```bash
+sudo apt install ./meshropractor_0.2.6_amd64.deb
+meshropractor
+```
+
+Приложение также появится в меню программ. Обновления Linux устанавливаются через
+APT; кнопка проверки обновлений открывает страницу релизов. Сборка через Docker,
+зависимости и проверка в чистой системе описаны в [инструкции Linux](docs/BUILD_LINUX.md).
+Опубликованные файлы релизов могут отставать от доступных сборок исходников.
 
 ### Запуск из исходников
 
-Проверенное окружение — **Windows x64 и Python 3.12**. NVIDIA GPU с CUDA необязателен:
+Исходники проверены в **Windows x64 и Debian 12 с Python 3.12**. NVIDIA GPU с CUDA необязателен:
 обучение работает и на CPU. Зависимости закреплены в [requirements.txt](requirements.txt).
 
 В PowerShell:
@@ -93,6 +113,15 @@ py -3.12 -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe src/Meshropractor.py
+```
+
+На Linux с Python 3.12 и установленными системными библиотеками Qt/OpenGL:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python src/Meshropractor.py
 ```
 
 ## Быстрый старт
@@ -156,6 +185,7 @@ py -3.12 -m venv .venv
 | [Проверки](docs/VALIDATION.md) | Тесты, проверки нативной сцены и интерпретация точности. |
 | [Производительность](docs/PERFORMANCE.md) | Изменения рендеринга и методика замеров. |
 | [Сборка Windows](docs/BUILD_WINDOWS.md) | PyInstaller, Inno Setup и подготовка релизов. |
+| [Сборка Linux](docs/BUILD_LINUX.md) | Пакет `.deb` для Debian/Ubuntu, Docker и проверка установки. |
 | [English user guide](docs/USER_GUIDE.md) | Английская версия руководства пользователя. |
 
 ## Разработка
@@ -182,6 +212,7 @@ EXE, упакованных STEP-библиотек и модуля лечени
 | `src/` | Интерфейс Qt/VTK, CAD и сетки, фоновые задачи и компенсация. |
 | `tests/` | Регрессионные тесты геометрии, контроллеров и интерфейса. |
 | `scripts/` | Проверки нативных сцен и профилирование. |
+| `packaging/linux/` | Среда сборки Linux, пакет Debian и проверка установки. |
 | `docs/` | Документация пользователя и разработчика. |
 | `assets/` | Значки и ресурсы приложения. |
 | `licenses/repair-engine/` | Исходники и лицензии отдельного модуля лечения. |
@@ -193,7 +224,7 @@ EXE, упакованных STEP-библиотек и модуля лечени
 ```
 
 Сначала собирается модуль лечения, затем приложение; команды приведены
-в [инструкции сборки](docs/BUILD_WINDOWS.md).
+в инструкциях сборки [Windows](docs/BUILD_WINDOWS.md) и [Linux](docs/BUILD_LINUX.md).
 
 ## Возможности и ограничения расчётов
 
