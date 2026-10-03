@@ -1,7 +1,7 @@
 """Viewport selection, overlays and contextual actions, separate from mesh mutations."""
 import numpy as np
 from PySide6.QtCore import QObject, QEvent, Qt, QSize, QTimer, QRect
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolButton, QButtonGroup, QComboBox, QDoubleSpinBox, QLabel, QCheckBox, QRubberBand, QPushButton
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolButton, QButtonGroup, QComboBox, QDoubleSpinBox, QLabel, QCheckBox, QPushButton
 from vtkmodules.vtkRenderingCore import vtkCellPicker, vtkHardwareSelector
 from vtkmodules.vtkCommonDataModel import vtkSelectionNode
 from vtkmodules.util.numpy_support import vtk_to_numpy
@@ -21,7 +21,6 @@ class SlicerWorkspace(QObject):
         self.overlays = {}
         self.preview = {}
         self.left_down = False
-        self.right_start = None
         self.rubber = None
         self.menu = None
         self.manual = None
@@ -40,7 +39,7 @@ class SlicerWorkspace(QObject):
         layout.setSpacing(2)
         self.group = QButtonGroup(self)
         self.buttons = {}
-        names = [('part', 'Выбор деталей / навигация: щелчок — деталь; рамка от пустого места — выбор; Alt + мышь — вращение'), ('triangle', 'Выбор треугольника'),
+        names = [('part', 'Выбор деталей: щелчок — деталь; рамка от пустого места — выбор. ПКМ с движением: внутри круга — вращение, снаружи — поворот в плоскости экрана'), ('triangle', 'Выбор треугольника'),
                  ('cad_face', 'Выбор целой CAD-поверхности (BREP)'),
                  ('plane', 'Выбор связной плоскости'), ('smooth', 'Выбор плавной поверхности'),
                  ('component', 'Выбор связной оболочки'), ('brush', 'Кисть по поверхности'),
@@ -112,7 +111,8 @@ class SlicerWorkspace(QObject):
         self.plotter = plotter
         if isinstance(plotter, QWidget):
             plotter.installEventFilter(self)
-            self.rubber = QRubberBand(QRubberBand.Rectangle, plotter)
+            from scene_navigation import SceneOutline
+            self.rubber = SceneOutline(plotter)
             from orientation_cube import OrientationCube
             self.cube = OrientationCube(plotter)
             plotter.hide_axes()
@@ -133,7 +133,7 @@ class SlicerWorkspace(QObject):
         if mode != 'part':
             self.window.ui.section_panel.manipulate.setChecked(False)
         if isinstance(self.plotter, QWidget): self.plotter.setCursor(Qt.ArrowCursor if mode == 'part' else Qt.CrossCursor)
-        self.window.ui.status_label.setText('Готово' if mode == 'part' else 'Поверхности выбранных деталей: Shift — добавить, Ctrl — вычесть, Alt + мышь — навигация, Esc — сброс.')
+        self.window.ui.status_label.setText('Готово' if mode == 'part' else 'Поверхности: Shift — добавить, Ctrl — вычесть; ПКМ с движением — вращение; Esc — сброс.')
 
     def clear_selection(self):
         self.selection.clear()
@@ -389,13 +389,6 @@ class SlicerWorkspace(QObject):
             self.clear_selection()
             self.supports.clear_preview()
             return True
-        if kind == QEvent.MouseButtonPress and event.button() == Qt.RightButton:
-            self.right_start = event.position().toPoint()
-        if kind == QEvent.MouseButtonRelease and event.button() == Qt.RightButton:
-            if self.right_start is not None and (event.position().toPoint() - self.right_start).manhattanLength() < 5:
-                position = event.globalPosition().toPoint()
-                QTimer.singleShot(0, lambda: self.popup(position))
-            self.right_start = None
         if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
             self.left_start = event.position().toPoint()
             self.part_box_candidate = self.part_box_active = False

@@ -118,6 +118,13 @@ Click a part to select it; Shift/Ctrl modify part selection. Unload and selected
 use checked parts in the current scene. Right-click opens a radial move/rotate/export/
 unload menu, while a right-button drag retains camera navigation. Unload supports undo.
 
+Holding the right button shows an unfilled dashed circle in both workspaces.
+Start a right-drag inside it to orbit in 3D; start outside it to roll the view
+clockwise/counterclockwise in the screen plane. The gesture mode stays fixed
+until release, even if the pointer crosses the circle. This also works while
+selecting surfaces, measuring or placing supports; Alt is optional for navigation.
+Selection rectangles and the build-volume frame contain outlines only.
+
 ### Support generation
 
 The Supports ribbon generates columns or branching supports, places individual manual

@@ -153,6 +153,8 @@ These selection gestures apply to the slicer's **part selection** mode:
 | Shift / Ctrl + click or rectangle | Add parts / toggle part selection. |
 | Double-click a part / empty space | Orbit around the part / return to the build-plate center. |
 | Alt + left-drag | Rotate the camera, including from empty space. |
+| Right-drag starting inside the dashed circle | Orbit the scene in 3D, including during surface selection and measurements. |
+| Right-drag starting outside the circle | Rotate the view clockwise/counterclockwise in the screen plane. |
 | Click a view-cube face | Align the camera to that face. |
 | Ctrl+S | Save the project. |
 | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z | Undo / redo. |

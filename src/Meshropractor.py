@@ -1867,7 +1867,7 @@ class MainWindow(ProjectController):
 
         # 2. Каркас габаритов камеры
         bounds_mesh = pv.Cube(center=(0, 0, z_len / 2.0), x_length=x_len, y_length=y_len, z_length=z_len)
-        bounds_actor = self.ui.slicer_plotter.add_mesh(bounds_mesh, style='wireframe', color="#5dade2", line_width=1,
+        bounds_actor = self.ui.slicer_plotter.add_mesh(bounds_mesh.extract_all_edges(), color="#5dade2", line_width=1,
                                                        opacity=0.3, name="plat_bounds")
         bounds_actor.pickable = False
 

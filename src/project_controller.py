@@ -243,6 +243,8 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             self.ui.def_cube.dispose()
         for plotter in (self.ui.plotter, self.ui.slicer_plotter):
             if plotter is not None:
+                navigation = getattr(plotter, '_scene_navigation', None)
+                if navigation: navigation.dispose()
                 performance = getattr(plotter, '_viewport_performance', None)
                 if performance: performance.dispose()
                 plotter.close()

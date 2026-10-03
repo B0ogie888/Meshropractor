@@ -381,6 +381,9 @@ class Ui_MainWindow(object):
         self.slicer_plotter.winId()  # Заставляем Qt выделить память до скрытия
         self._slicer_center_layout.insertWidget(1 if hasattr(self, 'surface_toolbar') else 0, self.slicer_plotter)
         if hasattr(self, 'workspace_tools'): self.workspace_tools.attach(self.slicer_plotter)
+        from scene_navigation import SceneNavigation
+        self.slicer_plotter._scene_navigation = SceneNavigation(
+            self.slicer_plotter, lambda position: self.workspace_tools.popup(position))
 
     def _ensure_def_plotter(self):
         """Лениво создает VTK-сцену предеформации"""
@@ -398,6 +401,8 @@ class Ui_MainWindow(object):
         from orientation_cube import OrientationCube
         self.def_cube = OrientationCube(self.plotter)
         self.plotter.hide_axes()
+        from scene_navigation import SceneNavigation
+        self.plotter._scene_navigation = SceneNavigation(self.plotter)
 
     def _on_stack_current_changed(self, index):
         """Триггерит создание сцен при реальном переходе пользователя на вкладку"""
