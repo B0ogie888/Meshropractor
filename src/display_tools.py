@@ -210,6 +210,8 @@ class DisplayTools(QObject):
 
     @staticmethod
     def _visual(mesh):
+        from texture_geometry import appearance
+        if appearance(mesh) is not None: return 'appearance', None
         visual = mesh.visual
         kind = getattr(visual, 'kind', None)
         if kind in {'face', 'vertex'} and visual.defined:
@@ -245,7 +247,10 @@ class DisplayTools(QObject):
                 visual = self._visual(mesh)
                 if visual is not None:
                     kind, values = visual
-                    if kind == 'texture':
+                    if kind == 'appearance':
+                        from texture_render import display_data
+                        data, texture, colors = display_data(mesh, data)
+                    elif kind == 'texture':
                         data.active_texture_coordinates = values[0]
                         texture = pv.Texture(values[1])
                     else:
@@ -265,11 +270,13 @@ class DisplayTools(QObject):
             saved = self._base_styles.get(key)
             if saved is None:
                 saved = dict(scalar=actor.mapper.GetScalarVisibility(), mode=actor.mapper.GetScalarMode(),
-                             color=actor.mapper.GetColorMode(), name=actor.mapper.GetArrayName(), texture=actor.GetTexture())
+                             color=actor.mapper.GetColorMode(), name=actor.mapper.GetArrayName())
                 self._base_styles[key] = saved
             record = self._display_dataset(row, part)
             actor.mapper.dataset = record['data']
-            actor.SetTexture(record['texture'] if self.state['texture'] else saved['texture'])
+            # A visibility toggle must also clear an atlas retained by a previous
+            # render/restore; it is never part of the untextured actor style.
+            actor.SetTexture(record['texture'] if self.state['texture'] else None)
             if record['colors']:
                 actor.mapper.SetScalarVisibility(True); actor.mapper.SetColorModeToDirectScalars()
                 if record['colors'] == 'face': actor.mapper.SetScalarModeToUseCellFieldData()

@@ -306,6 +306,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                               linked=self.ui.chk_link_factor.isChecked(), search_time=self.ui.cb_search_time.currentIndex(),
                               icp=self.ui.chk_icp.isChecked(), align_tolerance=self.ui.sb_align_tolerance.value(), align_coverage=self.ui.sb_align_coverage.value(), limit=self.ui.sb_max_deviation.value(),
                               min_coverage=self.ui.sb_min_coverage.value(), heat_limit=self.ui.sliders["heat_limit"][0].value())
+        state.settings['texture_display'] = bool(getattr(getattr(self, 'display_tools', None), 'state', {}).get('texture', False))
         return state
 
     def save_project(self, checked=False, *, save_as=False, after_save=None):
@@ -434,6 +435,9 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                 control.setCurrentIndex(settings.get(key, default))
             self.ui.chk_link_factor.setChecked(settings.get("linked", True))
             self.ui.chk_icp.setChecked(settings.get("icp", True))
+            if hasattr(self, 'texture_tools'):
+                self.texture_tools.active = None
+                self.texture_tools.show(bool(settings.get('texture_display', False)))
             for key, control, default in (("align_tolerance", self.ui.sb_align_tolerance, 0), ("align_coverage", self.ui.sb_align_coverage, 30), ("points", self.ui.sb_points, 20000), ("factor_xy", self.ui.sb_factor, 1.0),
                                           ("factor_z", self.ui.sb_factor_z, 1.0), ("limit", self.ui.sb_max_deviation, 5.0),
                                           ("min_coverage", self.ui.sb_min_coverage, 30.0),

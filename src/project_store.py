@@ -118,6 +118,18 @@ def save_project(path, state, preview=b""):
                         arrays = {"vertices": mesh.vertices, "faces": mesh.faces}
                         info = {k: v for k, v in record.items() if k != "mesh"}
                         info["metadata"] = mesh.metadata
+                        from texture_geometry import KEY, fresh, appearance, validate_appearance
+                        if KEY in mesh.metadata:
+                            # Topology edits can make an inherited appearance obsolete.
+                            # Persist only mappings that still belong to the current mesh.
+                            info['metadata'] = dict(mesh.metadata)
+                            reference = np.asarray(mesh.metadata[KEY].get('faces'))
+                            if reference.shape == (len(mesh.faces), 3):
+                                validate_appearance(mesh.metadata[KEY], len(mesh.faces))
+                            if appearance(mesh) is None: info['metadata'].pop(KEY)
+                        elif getattr(mesh.visual, 'defined', False):
+                            info['metadata'] = dict(mesh.metadata, **{KEY: fresh(mesh)})
+                            validate_appearance(info['metadata'][KEY], len(mesh.faces))
                         info = _json_value(info, arrays)
                         name = f"meshes/{group}_{index}.npz"
                         payload = io.BytesIO()
@@ -179,6 +191,8 @@ def load_project(path):
                             raise ValueError("Некорректные индексы треугольников.")
                         mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
                         mesh.metadata = info.pop("metadata", {})
+                        from texture_geometry import KEY, validate_appearance
+                        if KEY in mesh.metadata: validate_appearance(mesh.metadata[KEY], len(mesh.faces))
                         getattr(state, group).append(dict(info, mesh=validate_mesh(mesh)))
         else:
             raise ValueError(f"Версия проекта {version} не поддерживается.")

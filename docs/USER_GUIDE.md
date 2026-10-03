@@ -13,6 +13,15 @@
 
 ## Workflow
 
+### Textures and colors
+
+The **Textures** ribbon provides 15 working commands: image layers on parts or
+selected STL/CAD surfaces, UV projections, layer selection/editing, copy/paste,
+removal and visibility, surface painting, color baking and separation into meshes.
+Images are embedded in `.mrp`; changes support Undo/Redo. Painting preserves BREP
+and child supports; color separation creates meshes. Textures affect appearance
+without adding printable relief. See [commands and limitations](TEXTURES.md) (Russian).
+
 ### Placement and repair
 
 The **Placement** ribbon has 13 tools: precise transforms, mouse dragging, face

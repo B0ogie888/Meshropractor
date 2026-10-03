@@ -43,6 +43,7 @@ Two workspaces share project storage and geometry tools:
 | **Mesh repair** | Diagnose boundaries, normals, fragments, overlaps and intersections; prepare automatic or manual repairs with preview and Undo/Redo. |
 | **Placement** | Move, rotate, scale, mirror and duplicate parts; arrange them on a platform or in its volume and compare orientations. |
 | **Supports** | Generate supports or define surface regions manually. Support groups belong to their part and follow its transforms. |
+| **Textures and colors** | Apply image layers to STL/CAD surfaces, edit projections, copy textures, paint faces and split meshes by color. Images and mappings are embedded in projects with Undo/Redo. |
 | **Inspection** | Combine clipping planes, measure geometry and view live selected-part volume, material cost and packing statistics. |
 | **Compensation** | Align CAD and scan, build deviation maps, train a displacement field and export a compensated STL with independent XY/Z factors. |
 | **Projects** | Save models, BREP, supports, platforms and calculation results in `.mrp`; undo and redo changes during the session. |
@@ -184,6 +185,7 @@ STEP export preserves the nominal CAD rather than converting those meshes to CAD
 | [Mesh repair](docs/MESH_REPAIR.md) | Diagnostics, repair commands, tolerances and result review. | Русский |
 | [Placement](docs/PLACEMENT.md) | Arrangement, orientation search and packing criteria. | Русский |
 | [Display](docs/DISPLAY.md) | Sections, scene annotations and statistics. | Русский |
+| [Textures and colors](docs/TEXTURES.md) | Image layers, projections, surface painting and color separation. | Русский |
 | [Validation](docs/VALIDATION.md) | Tests, native scene checks and accuracy interpretation. | Русский |
 | [Performance](docs/PERFORMANCE.md) | Rendering changes and benchmark methodology. | Русский |
 | [Windows build](docs/BUILD_WINDOWS.md) | PyInstaller, Inno Setup and release packaging. | Русский |

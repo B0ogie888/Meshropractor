@@ -221,6 +221,8 @@ class MainWindow(ProjectController):
         available_commands.add('CAD / STEP')
         from display_ribbon import DISPLAY_COMMANDS
         available_commands.update(DISPLAY_COMMANDS.values())
+        from texture_ribbon import COMMANDS as TEXTURE_COMMANDS
+        available_commands.update(TEXTURE_COMMANDS.values())
         from settings_icons import SETTINGS_COMMANDS
         available_commands.update(SETTINGS_COMMANDS)
         for name, button in self.ui.ribbon_btns.items():
@@ -242,6 +244,8 @@ class MainWindow(ProjectController):
         self.cad_tools = CADTools(self)
         from display_tools import DisplayTools
         self.display_tools = DisplayTools(self)
+        from texture_tools import TextureTools
+        self.texture_tools = TextureTools(self)
         from window_snap import enable_snap
         enable_snap(self)
         QApplication.instance().installEventFilter(self)
@@ -1546,6 +1550,9 @@ class MainWindow(ProjectController):
         """Очищает память и ОБЕ 3D-сцены для старта нового проекта"""
         self._repair_checked_cad = None
         if hasattr(self, 'workspace_tools'): self.workspace_tools.clear()
+        if hasattr(self, 'display_tools'):
+            self.display_tools.datasets.clear()
+            self.display_tools._base_styles.clear()
         if hasattr(self.ui, "section_panel"):
             self.ui.section_panel.clear()
         self.ui.lbl_align_quality.setText("Площадь в допуске и P95 появятся после совмещения.")

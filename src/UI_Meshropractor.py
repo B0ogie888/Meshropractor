@@ -867,7 +867,11 @@ class Ui_MainWindow(object):
         repair_panel, self.repair_buttons = create_repair_ribbon()
         self.ribbon_btns.update({REPAIR_COMMANDS[key]: button for key, button in self.repair_buttons.items()})
         self.magics_ribbon.addTab(repair_panel, "ИСПРАВЛЕНИЕ")
-        self.magics_ribbon.addTab(self.create_ribbon_tab(["Текстура 1", "Текстура 2"], "Текстурирование"), "ТЕКСТУРЫ")
+        from texture_ribbon import create_texture_ribbon, COMMANDS as TEXTURE_COMMANDS
+        texture_panel, self.texture_buttons = create_texture_ribbon()
+        self.magics_ribbon.addTab(texture_panel, 'ТЕКСТУРЫ')
+        self.ribbon_btns.update({TEXTURE_COMMANDS[key]: button for key, button in self.texture_buttons.items()
+                                 if key != 'colors'})
         from placement_ribbon import create_placement_ribbon, PLACEMENT_COMMANDS
         placement_panel, self.placement_buttons = create_placement_ribbon()
         self.magics_ribbon.addTab(placement_panel, "РАСПОЛОЖЕНИЕ")
