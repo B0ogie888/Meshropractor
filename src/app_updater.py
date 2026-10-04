@@ -1,4 +1,4 @@
-"""Asynchronous, opt-in GitHub download and Windows installer handoff."""
+"""Platform-specific GitHub checks and opt-in Windows installer handoff."""
 import ctypes
 from pathlib import Path
 import sys
@@ -77,7 +77,8 @@ class UpdateController(QObject):
 
     def start(self):
         """Called once by the application entry point, after closing the splash."""
-        if not self.closed and sys.platform == 'win32': self.start_timer.start(1800)
+        if not self.closed and (sys.platform == 'win32' or sys.platform.startswith('linux')):
+            self.start_timer.start(1800)
 
     def manual_check(self):
         if self.ready and self.available:
@@ -87,12 +88,6 @@ class UpdateController(QObject):
 
     def check(self, manual=False):
         if self.closed: return
-        if sys.platform != 'win32':
-            if manual:
-                QDesktopServices.openUrl(QUrl('https://github.com/B0ogie888/Meshropractor/releases'))
-                self.window.log('[i] Linux: скачайте новый пакет .deb со страницы релизов '
-                                'и установите его через менеджер пакетов.')
-            return
         self.start_timer.stop()
         if self.worker:
             self.manual = self.manual or manual
@@ -100,7 +95,9 @@ class UpdateController(QObject):
         self.manual = manual
         self.pending_offer = None
         self.offer_timer.stop()
-        self._begin('check', lambda worker: check_for_update(APP_VERSION, cancelled=worker.isInterruptionRequested))
+        platform = sys.platform
+        self._begin('check', lambda worker: check_for_update(APP_VERSION, cancelled=worker.isInterruptionRequested,
+                                                           platform=platform))
 
     def _begin(self, task, function):
         if self.worker or self.closed: return
@@ -200,6 +197,14 @@ class UpdateController(QObject):
     def offer_download(self):
         update = self.available
         if not update or self.closed: return
+        if sys.platform.startswith('linux'):
+            if self._ask('Доступно обновление Meshropractor',
+                         f'Доступна версия {update.version}.\nСейчас установлена {APP_VERSION}.\n'
+                         f'Linux-пакет: {update.asset_name} · {size_text(update.size)}.\n\n'
+                         'Скачайте пакет .deb со страницы релиза и установите через менеджер пакетов.',
+                         'Открыть релиз'):
+                QDesktopServices.openUrl(QUrl(update.page_url))
+            return
         if self._ask('Доступно обновление Meshropractor',
                      f'Доступна версия {update.version}.\nСейчас установлена {APP_VERSION}.\n'
                      f'Размер загрузки: {size_text(update.size)}.\n\nСкачать обновление из GitHub Releases?', 'Скачать'):
@@ -217,6 +222,9 @@ class UpdateController(QObject):
 
     def start_download(self):
         if self.closed or self.worker or not self.available: return
+        if sys.platform.startswith('linux'):
+            self.offer_download()
+            return
         self.ready = None
         self._show_progress('Подключение к GitHub…')
         self._begin('download', lambda worker: download_release(self.available, self.directory,
@@ -242,7 +250,7 @@ class UpdateController(QObject):
         if self._ask('Обновление скачано',
                      f'Версия {self.available.version} готова к установке.\n\n'
                      'Приложение предложит сохранить проект и закроется. Установщик покажет ход обновления '
-                     'и снова запустит Meshropractor. Windows может запросить разрешение на установку.\n\n'
+                     'и снова запустит main_window. Windows может запросить разрешение на установку.\n\n'
                      'Установить обновление сейчас?', 'Установить'):
             self.install_now()
 

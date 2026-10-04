@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 import json
 import os
 from pathlib import Path
@@ -52,6 +53,19 @@ class DisplaySettingsTests(unittest.TestCase):
         self.assertIs(plotter.actors['part'], model)
         apply_to_plotter(None, chosen)  # lazy scene has not been opened yet
 
+    def test_scene_background_changes_legend_text_without_changing_color_scale(self):
+        from vtkmodules.vtkRenderingAnnotation import vtkScalarBarActor
+        from vtkmodules.vtkCommonCore import vtkLookupTable
+        bar = vtkScalarBarActor(); lookup = vtkLookupTable(); lookup.Build(); bar.SetLookupTable(lookup)
+        plotter = SimpleNamespace(set_background=Mock(), render=Mock(), scalar_bars={'deviation': bar})
+        colors = [lookup.GetTableValue(i) for i in range(lookup.GetNumberOfTableValues())]
+        for background, light in (('#1d2825', True), ('#e6eae5', False)):
+            apply_to_plotter(plotter, DisplayPreferences(background=background))
+            for prop in (bar.GetTitleTextProperty(), bar.GetLabelTextProperty(), bar.GetAnnotationTextProperty()):
+                self.assertEqual(prop.GetColor()[0] > .5, light)
+            self.assertIs(bar.GetLookupTable(), lookup)
+            self.assertEqual(colors, [lookup.GetTableValue(i) for i in range(lookup.GetNumberOfTableValues())])
+
     def test_dialog_cancel_does_not_change_preferences_and_apply_is_explicit(self):
         applied = []
         dialog = DisplaySettingsDialog(DisplayPreferences(), applied.append)
@@ -70,13 +84,17 @@ class DisplaySettingsTests(unittest.TestCase):
         self.assertEqual(applied[-1], DisplayPreferences())
 
     def test_settings_ribbon_commands_have_icons_and_real_handlers(self):
-        from Meshropractor import MainWindow
+        from main_window import MainWindow
+        # Verify actual saved preferences survive the engineering theme setup;
+        # a fresh profile now uses the theme's scene colour, not legacy white.
+        saved = DisplayPreferences('#314159', 'fxaa', 8, False)
+        save_preferences(self.settings, saved)
         update_calls = []
-        with patch('app_updater.UpdateController.manual_check', lambda controller: update_calls.append(controller)):
+        with patch('app_updater.UpdateController.manual_check', lambda controller: update_calls.append(controller)), \
+             patch('main_window.QSettings', lambda *args: self.settings):
             window = MainWindow()
         try:
-            self.assertEqual(window.ui.display_preferences, load_preferences(window.settings))
-            window.settings = self.settings
+            self.assertEqual(window.ui.display_preferences, saved)
             for name in SETTINGS_COMMANDS:
                 self.assertTrue(window.ui.ribbon_btns[name].isEnabled(), name)
                 self.assertFalse(window.ui.ribbon_btns[name].icon().isNull(), name)
@@ -107,7 +125,7 @@ class DisplaySettingsTests(unittest.TestCase):
         finally:
             window.dirty = False
             window.close()
-            window.deleteLater()
+            delete_widget(window)
             APP.processEvents()
 
 

@@ -1,0 +1,9 @@
+Generator: built-in image_gen (edit), transparent_background=true.
+Edit target: meshropractor-mark-concept.png
+Output: meshropractor-mark-contoured.png
+
+Use case: precise-object-edit.
+Asset type: application logo for Meshropractor CAD and mesh software.
+Input image: edit target, the ORIGINAL approved three-dimensional folded M logo. Keep its exact isometric M silhouette, camera angle, arrangement of two long top faces and two vertical side faces, inward diagonal planes, central negative space, proportions, and single yellow triangular inset. Do not replace it with a flat typographic M.
+Requested changes only: improve visibility and contour definition. Change the very dark left and right vertical faces to distinct medium-light neutral warm silver greys (approximately #9BA6A1 left and #78877F right), both clearly lighter than the application's dark graphite title bar #252B2B. Keep the top faces off-white, and keep the triangular yellow face signal yellow #E5D943. Define ALL outside edges with a restrained crisp light silver rim and a narrow darker inner edge, and separate adjacent facets with clean contrasting contour lines, thick enough to remain readable at small icon size. Keep subtle flat planar shading; no glossy metal or fine surface texture. Make the M feel like a precisely machined folded solid with clearly separated geometric faces.
+True transparent background and transparent negative spaces. A single centered symbol, generous margin, no tile, no text, no glow, no drop shadow, no added ornament, no surrounding objects. Preserve the original 3D geometry and identity.

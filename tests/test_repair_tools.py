@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 """Qt repair transactions with real mesh actors but no OpenGL window."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import QCheckBox, QPushButton
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from test_desktop import APP, TestPlotter
-from Meshropractor import MainWindow
+from main_window import MainWindow
 from part_supports import make_group
 from project_store import ProjectState
 from repair_dialog import MANUAL
@@ -61,7 +62,7 @@ class RepairToolsTests(unittest.TestCase):
             session.dialog.reject()
         self.window.dirty = False
         self.window.close()
-        self.window.deleteLater()
+        delete_widget(self.window)
         APP.processEvents()
 
     def wait_for_job(self):

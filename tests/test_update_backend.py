@@ -68,6 +68,12 @@ class ReleaseDiscoveryTests(unittest.TestCase):
         self.assertIsNone(self.check([release("0.2.5.0"), release("0.2.4")], current="v0.2.5"))
         self.assertIsNone(self.check([]))
 
+    def test_two_component_0_3_upgrade_and_equivalent_versions(self):
+        result = self.check([release("0.3")], current="0.2.6")
+        self.assertEqual(result.version, "0.3")
+        self.assertIsNone(self.check([release("0.3.0"), release("0.2.7")], current="0.3"))
+        self.assertEqual(self.check([release("0.3.1")], current="0.3").version, "0.3.1")
+
     def test_published_legacy_mistyped_tag_does_not_offer_downgrade(self):
         self.assertIsNone(self.check([release("0.2.4", tag="v.2.4.0", legacy=True)]))
         result = self.check([release("0.2.6", tag="v.2.6.0", legacy=True)])

@@ -6,6 +6,9 @@ from slicer_tools import TOOL_NAMES
 
 
 def main_icon(name):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('main', name)
+    if icon is not None: return icon
     sheet = '<path d="M12 5H30L39 14V43H12Z M30 5V14H39"/>'
     folder = '<path d="M5 13H21L26 18H43V39H5Z M5 21H43"/>'
     disk = '<path d="M7 5H35L42 12V43H7Z M15 5V19H33V5 M15 43V28H34V43"/>'
@@ -27,6 +30,9 @@ def main_icon(name):
 
 
 def tool_icon(index):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('tools', index)
+    if icon is not None: return icon
     cube = '<path d="M8 12 22 5 36 12 36 29 22 37 8 29Z M8 12 22 20 36 12 M22 20V37" fill="none" stroke="#b9c2ca" stroke-width="1.8" stroke-linejoin="round"/>'
     overlays = [
         '<path d="M34 26V40M27 33H41" stroke="#f0b949" stroke-width="3"/>',
@@ -42,7 +48,7 @@ def tool_icon(index):
     return QIcon(pixmap)
 
 
-def create_tools_ribbon():
+def create_tools_ribbon(*, include_cad=True):
     container = QWidget()
     layout = QHBoxLayout(container)
     layout.setContentsMargins(8, 0, 8, 0)
@@ -76,15 +82,18 @@ def create_tools_ribbon():
         label.setStyleSheet('color: #aaa; font-size: 10px;')
         group.addWidget(label)
         layout.addLayout(group)
-    from cad_dialog import cad_icon
-    cad = QToolButton()
-    cad.setText('CAD / STEP')
-    cad.setIcon(cad_icon())
-    cad.setIconSize(QSize(28, 28))
-    cad.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-    cad.setToolTip('CAD-тела и поверхности: качество сетки, разделение тел, экспорт STEP')
-    cad.setStyleSheet('QToolButton {border: none; padding: 0 10px; color: #ddd;} QToolButton:hover {background: #444;}')
-    layout.addWidget(cad)
-    buttons['CAD / STEP'] = cad
+    if include_cad:  # Only used by the base layout without a contextual inspector.
+        from cad_dialog import cad_icon
+        cad = QToolButton()
+        cad.setText('CAD / STEP')
+        cad.setIcon(cad_icon())
+        cad.setIconSize(QSize(28, 28))
+        cad.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        cad.setToolTip('CAD-тела и поверхности: качество сетки, разделение тел, экспорт STEP')
+        cad.setStyleSheet('QToolButton {border: none; padding: 0 10px; color: #ddd;} QToolButton:hover {background: #444;}')
+        layout.addWidget(cad)
+        buttons['CAD / STEP'] = cad
+    from model_tool_ribbon import append_groups
+    append_groups(container,layout)
     layout.addStretch()
     return container, buttons

@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 """Offline updater UI and project-save integration tests; no installer is run."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -166,7 +167,7 @@ class UpdaterTestBase(unittest.TestCase):
             self.window.dirty = False
         self.window._confirm_discard = Mock(return_value=True)
         self.window.close()
-        self.window.deleteLater()
+        delete_widget(self.window)
         APP.processEvents()
 
 
@@ -378,7 +379,7 @@ class UpdateProjectSaveTests(UpdaterTestBase):
     """Exercise the real project save/discard flow and its asynchronous continuation."""
     def setUp(self):
         super().setUp()
-        from Meshropractor import MainWindow
+        from main_window import MainWindow
         self.window = MainWindow()
         self.window.add_to_recent = Mock()
         self.updater = self.window.updater

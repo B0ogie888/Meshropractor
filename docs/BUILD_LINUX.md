@@ -1,11 +1,11 @@
-# Сборка и установка Linux 0.2.6
+# Сборка и установка Linux 0.3
 
-Linux-пакет — `meshropractor_0.2.6_amd64.deb`. Он содержит Python, Qt, VTK,
+Linux-пакет — `meshropractor_0.3_amd64.deb`. Он содержит Python, Qt, VTK,
 OpenCascade, CPU-версию PyTorch и отдельный модуль ремонта. Устанавливать Python
 и зависимости через pip для готового пакета не нужно.
 
-Размер установщика — около **735 МиБ**; установленная сборка занимает примерно
-**4.4 ГиБ**, дополнительно нужны место для проектов и системных библиотек.
+Размер установщика — около **732 МиБ**; установленная сборка занимает примерно
+**4.3 ГиБ**, дополнительно нужны место для проектов и системных библиотек.
 
 Целевая архитектура — **x86-64 (amd64)**. Сборка использует Debian 12 и glibc 2.36;
 целевые системы — **Debian 12 и Ubuntu 24.04**. Для графики нужны OpenGL и X11.
@@ -21,7 +21,7 @@ OpenCascade, CPU-версию PyTorch и отдельный модуль рем�
 Скопируйте `.deb` на Linux-компьютер и выполните в его каталоге:
 
 ```bash
-sudo apt install ./meshropractor_0.2.6_amd64.deb
+sudo apt install ./meshropractor_0.3_amd64.deb
 ```
 
 APT установит системные библиотеки и OpenGL-драйверы Mesa, перечисленные в пакете. Приложение появится
@@ -34,12 +34,17 @@ meshropractor
 Сохраните `.sha256` рядом с установщиком для проверки файла:
 
 ```bash
-sha256sum -c meshropractor_0.2.6_amd64.deb.sha256
+sha256sum -c meshropractor_0.3_amd64.deb.sha256
 ```
 
 Для обновления закройте приложение и установите новый `.deb` той же командой.
-В Linux кнопка проверки обновлений открывает страницу GitHub Releases;
-автоматическая загрузка и запуск Windows EXE используются только в Windows.
+В 0.3 восстановлены фоновая проверка после запуска и ручная проверка
+из настроек. Приложение показывает свою версию из `VERSION`, сравнивает её со
+стабильными пакетами `meshropractor_<версия>_amd64.deb` в GitHub Releases и
+предлагает открыть конкретный новый релиз. Версия берётся из имени пакета,
+поэтому старый пакет с ошибочным тегом не предлагается как обновление.
+Скачайте `.deb` со страницы релиза и установите через APT; Windows EXE в Linux
+не предлагается. В ранее собранном пакете 0.2.6 кнопка только открывает список релизов.
 
 Удаление пакета:
 
@@ -63,31 +68,31 @@ PyInstaller собирает приложение для той ОС, на ко�
 Из корня проекта в PowerShell:
 
 ```powershell
-docker build --platform linux/amd64 -t meshropractor-linux-build:0.2.6 -f packaging/linux/Dockerfile .
+docker build --platform linux/amd64 -t meshropractor-linux-build:0.3 -f packaging/linux/Dockerfile .
 New-Item -ItemType Directory -Force dist/linux | Out-Null
 $projectPath = (Get-Location).Path
 $linuxOutput = Join-Path $projectPath 'dist/linux'
 docker run --rm --platform linux/amd64 --shm-size=1g `
   --mount "type=bind,source=$projectPath,target=/workspace,readonly" `
   --mount "type=bind,source=$linuxOutput,target=/out" `
-  meshropractor-linux-build:0.2.6
+  meshropractor-linux-build:0.3
 ```
 
 На Linux те же исходники собираются так:
 
 ```bash
-docker build --platform linux/amd64 -t meshropractor-linux-build:0.2.6 -f packaging/linux/Dockerfile .
+docker build --platform linux/amd64 -t meshropractor-linux-build:0.3 -f packaging/linux/Dockerfile .
 mkdir -p dist/linux
 docker run --rm --platform linux/amd64 --shm-size=1g \
   --mount "type=bind,source=$PWD,target=/workspace,readonly" \
   --mount "type=bind,source=$PWD/dist/linux,target=/out" \
-  meshropractor-linux-build:0.2.6
+  meshropractor-linux-build:0.3
 ```
 
 Сначала собирается `RepairEngine.spec`, затем `Meshropractor.spec`. До упаковки
 выполняется проверка готового приложения через Xvfb и Mesa. При ошибке пакет не
 создаётся. Результаты — в `dist/linux/`: установщик, SHA-256, отчёт и снимки
-`build-validation/`. GPL-исходники и уведомления отдельного модуля ремонта
+`build-validation-0.3/`. GPL-исходники и уведомления отдельного модуля ремонта
 включены в пакет, в том числе в `/usr/share/doc/meshropractor/repair-engine`.
 
 ## Проверка установленного пакета
@@ -104,11 +109,11 @@ docker run --rm --shm-size=1g \
   --mount "type=bind,source=$PWD,target=/workspace,readonly" \
   --mount "type=bind,source=$PWD/dist/linux,target=/out" \
   debian:12-slim bash /workspace/packaging/linux/validate.sh \
-  /out/meshropractor_0.2.6_amd64.deb /out/debian-validation
+  /out/meshropractor_0.3_amd64.deb /out/debian-validation-0.3
 ```
 
 Для Ubuntu замените образ на `ubuntu:24.04` и каталог отчёта на
-`/out/ubuntu-validation`. Проверка выполняется с программным OpenGL; поведение
+`/out/ubuntu-validation-0.3`. Проверка выполняется с программным OpenGL; поведение
 конкретных видеодрайверов и сеансов Wayland проверяется отдельно на рабочем ПК.
 
 Встроенную проверку можно запустить и на установленной системе:

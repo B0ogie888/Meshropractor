@@ -7,7 +7,7 @@
 **CAD and mesh preparation for additive manufacturing, with scan-based geometry compensation.**
 
 [![Tests](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/B0ogie888/Meshropractor/actions/workflows/tests.yml)
-[![Version](https://img.shields.io/badge/version-0.2.6-2563eb)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3-2563eb)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows_x64-475569)](#installation)
 [![Linux](https://img.shields.io/badge/Linux-amd64-FCC624?logo=linux&logoColor=black)](#linux-application)
 [![Python](https://img.shields.io/badge/python-3.12-3776ab)](requirements.txt)
@@ -42,8 +42,11 @@ Two workspaces share project storage and geometry tools:
 | **Native CAD** | Retain STEP BREP bodies and faces, change tessellation quality, select whole CAD faces and export transformed CAD as STEP. |
 | **Mesh repair** | Diagnose boundaries, normals, fragments, overlaps and intersections; prepare automatic or manual repairs with preview and Undo/Redo. |
 | **Placement** | Move, rotate, scale, mirror and duplicate parts; arrange them on a platform or in its volume and compare orientations. |
+| **Creation and copies** | Build ten geometric shapes from dimensions and tessellation settings; arrange a matrix of copies with live translucent previews. |
+| **Marking** | Define a surface area for text, images or Data Matrix; retain editable previews, merge relief into a part or export it. |
 | **Supports** | Generate supports or define surface regions manually. Support groups belong to their part and follow its transforms. |
 | **Textures and colors** | Apply image layers to STL/CAD surfaces, edit projections, copy textures, paint faces and split meshes by color. Images and mappings are embedded in projects with Undo/Redo. |
+| **Analysis and reports** | Check volumetric intersections, sample wall thickness and slice areas, estimate time/cost, record actual measurements and export HTML/PDF/JSON/CSV reports. |
 | **Inspection** | Combine clipping planes, measure geometry and view live selected-part volume, material cost and packing statistics. |
 | **Compensation** | Align CAD and scan, build deviation maps, train a displacement field and export a compensated STL with independent XY/Z factors. |
 | **Projects** | Save models, BREP, supports, platforms and calculation results in `.mrp`; undo and redo changes during the session. |
@@ -56,7 +59,7 @@ Download a published Windows x64 installer from [Releases](https://github.com/B0
 Packaged builds do not require a separate Python installation. A portable distribution
 uses the complete `dist\Meshropractor` folder, including `_internal`.
 
-The source version is **0.2.6**, defined in [VERSION](VERSION). Published installers may
+The current version is **0.3**, defined in [VERSION](VERSION). Published installers may
 lag behind the source version. To build this version locally, follow the
 [Windows packaging guide](docs/BUILD_WINDOWS.md) (Russian).
 
@@ -65,7 +68,7 @@ progress and can be canceled; installation requires a separate confirmation.
 
 ### Linux application
 
-Version **0.2.6** also builds as `meshropractor_0.2.6_amd64.deb` for **Debian 12 and
+Version **0.3** builds as `meshropractor_0.3_amd64.deb` for **Debian 12 and
 Ubuntu 24.04, x86-64**. Python and the application dependencies are included;
 the package uses CPU PyTorch. The desktop session needs OpenGL and X11, or XWayland
 under Wayland.
@@ -73,19 +76,32 @@ under Wayland.
 Install a built package from its directory:
 
 ```bash
-sudo apt install ./meshropractor_0.2.6_amd64.deb
+sudo apt install ./meshropractor_0.3_amd64.deb
 meshropractor
 ```
 
-It also appears in the application menu. Linux updates are installed through APT;
-the update button opens the release page. See the [Linux packaging guide](docs/BUILD_LINUX.md)
+It also appears in the application menu. Linux updates are installed through APT.
+Startup and manual checks compare Linux package versions,
+show the current version and offer the matching release page. See the [Linux packaging guide](docs/BUILD_LINUX.md)
 (Russian) for building the package with Docker and validating it in a clean system.
 Published release assets may lag behind the available source builds.
 
 ### Run from source
 
-Source checks cover **Windows x64 and Debian 12 with Python 3.12**. A CUDA-capable NVIDIA GPU
-is optional; training also runs on CPU. Dependencies are pinned in [requirements.txt](requirements.txt).
+Meshropractor 0.3 uses one engineering interface with light and dark themes.
+After installing dependencies, open `Meshropractor.pyw` in the repository root,
+or run `python src/Meshropractor.py`. Existing `.mrp` projects remain supported;
+previous interface preferences are migrated on first launch. An animated startup
+screen shows real initialization stages. [Interface details](docs/UI_DESIGN.md) (Russian).
+These changes are not yet included in a published installer.
+
+The interface offers a compact command ribbon, contextual part properties and
+light/dark themes. Drag arrows or XY/XZ/YZ planes extending from the origin to
+the arrowheads to move parts; use axis rings or the outer screen ring to rotate.
+Move anchor preferences are remembered for subsequent parts.
+
+Builds use **Python 3.12**, Windows x64 or Linux amd64. A CUDA-capable NVIDIA GPU is optional;
+training also runs on CPU. Dependencies are pinned in [requirements.txt](requirements.txt).
 
 From PowerShell:
 
@@ -184,8 +200,15 @@ STEP export preserves the nominal CAD rather than converting those meshes to CAD
 | [CAD / STEP](docs/CAD.md) | Bodies, faces, BREP, tessellation and STEP export. | Русский |
 | [Mesh repair](docs/MESH_REPAIR.md) | Diagnostics, repair commands, tolerances and result review. | Русский |
 | [Placement](docs/PLACEMENT.md) | Arrangement, orientation search and packing criteria. | Русский |
+| [Create a part](docs/PRIMITIVES.md) | Shapes, dimension diagrams and tessellation settings. | Русский |
+| [Matrix duplication](docs/DUPLICATION.md) | Copy counts, gaps and live virtual previews. | Русский |
+| [Marking](docs/MARKING.md) | Editable surface areas, content, projection and relief. | Русский |
+| [Interface design](docs/UI_DESIGN.md) | Themes, contextual panels, startup and application identity. | Русский |
+| [Editing and structures](docs/MODEL_TOOLS.md) | Hollowing, cuts, perforations, booleans, text, lattices and fixtures. | Русский |
 | [Display](docs/DISPLAY.md) | Sections, scene annotations and statistics. | Русский |
 | [Textures and colors](docs/TEXTURES.md) | Image layers, projections, surface painting and color separation. | Русский |
+| [Analysis and reports](docs/ANALYSIS_REPORTS.md) | Inspection methods, estimates, measurements and report formats. | Русский |
+| [Ribbon icons](assets/ribbon/README.md) | Editable SVG files and shared icon sizing. | Русский |
 | [Validation](docs/VALIDATION.md) | Tests, native scene checks and accuracy interpretation. | Русский |
 | [Performance](docs/PERFORMANCE.md) | Rendering changes and benchmark methodology. | Русский |
 | [Windows build](docs/BUILD_WINDOWS.md) | PyInstaller, Inno Setup and release packaging. | Русский |
@@ -193,28 +216,34 @@ STEP export preserves the nominal CAD rather than converting those meshes to CAD
 
 ## Development
 
+See [repository structure and release workflow](docs/DEVELOPMENT.md) (Russian)
+for entry points, script directories and artwork sources.
+
 After setting up the source environment, run the regression suite:
 
 ```powershell
+.\.venv\Scripts\python.exe scripts/validation/check_repository.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Native scene checks briefly open an application window and save reports and images in `output/`:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/smoke_cad_display.py
-.\.venv\Scripts\python.exe scripts/smoke_selection_statistics.py
+.\.venv\Scripts\python.exe scripts/validation/smoke_cad_display.py
+.\.venv\Scripts\python.exe scripts/validation/smoke_selection_statistics.py
 ```
 
-Version 0.2.6 passed **345 local regression tests**, plus frozen startup and bundled
-STEP/repair checks. GitHub Actions runs the regression suite on Windows; its current
+Version 0.3 passed **417 local regression tests**, plus native Qt/VTK checks of
+the themes, transforms, primitives and marking. GitHub Actions runs the regression suite on Windows; its current
 status appears in the badge above. Test scope is documented in [Validation](docs/VALIDATION.md).
 
 | Location | Responsibility |
 | --- | --- |
 | `src/` | Qt/VTK interface, CAD and mesh operations, background jobs and compensation. |
 | `tests/` | Geometry, controller and UI regression tests. |
-| `scripts/` | Native scene checks and performance profiling. |
+| `scripts/validation/` | Source, native scene and packaged application checks. |
+| `scripts/benchmarks/` | Viewport profiling and grid rendering diagnostics. |
+| `scripts/assets/` | SVG export and application icon packaging. |
 | `packaging/linux/` | Linux build environment, Debian package and clean installation checks. |
 | `docs/` | User and developer documentation. |
 | `assets/` | Application icons and resources. |
@@ -249,3 +278,7 @@ Windowed builds write logs to `%LOCALAPPDATA%\Meshropractor\logs\Meshropractor.l
 For a code change, describe the problem and validation in a pull request.
 
 [Support the author on Boosty](https://boosty.to/boogie888) · [Email](mailto:theboogie888@gmail.com)
+
+Scan the QR code to open the author's Boosty page:
+
+<a href="https://boosty.to/boogie888"><img src="assets/qr_donate.png" alt="QR code — support Meshropractor on Boosty" width="200" height="200"></a>

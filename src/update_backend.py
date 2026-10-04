@@ -1,7 +1,7 @@
 """GitHub release discovery and verified, streaming installer downloads.
 
 This module has no Qt dependency and never executes a downloaded file. Versions
-come from the installer name: historical release tags in this repository contain
+come from the platform package name: historical release tags in this repository contain
 typos and must not accidentally turn an old installer into a newer version.
 """
 
@@ -35,6 +35,7 @@ _INSTALLERS = (
     # Name used by the published 0.2.4 Inno Setup installer.
     re.compile(rf"Meshropractor_v({_VERSION})_Setup\.exe", re.IGNORECASE),
 )
+_LINUX_PACKAGE = re.compile(rf"meshropractor_({_VERSION})_amd64\.deb", re.IGNORECASE)
 
 
 class UpdateError(RuntimeError):
@@ -59,9 +60,10 @@ def _version_key(value):
     return numbers + (0,) * (4 - len(numbers))
 
 
-def _installer_version(name):
+def _installer_version(name, platform='win32'):
     if isinstance(name, str):
-        for pattern in _INSTALLERS:
+        patterns = (_LINUX_PACKAGE,) if platform.startswith('linux') else _INSTALLERS if platform == 'win32' else ()
+        for pattern in patterns:
             match = pattern.fullmatch(name)
             if match:
                 return match.group(1)
@@ -124,9 +126,9 @@ def _open_url(url, *, metadata=False):
     return response
 
 
-def _asset_update(release, asset):
+def _asset_update(release, asset, platform='win32'):
     name = asset.get("name")
-    version = _installer_version(name)
+    version = _installer_version(name, platform)
     size = asset.get("size")
     tag = release.get("tag_name")
     if (version is None or type(size) is not int or size < 2
@@ -150,7 +152,7 @@ def _asset_update(release, asset):
                          f"https://github.com/{REPOSITORY}/releases/tag/{quote(tag, safe='')}")
 
 
-def _release_update(release):
+def _release_update(release, platform='win32'):
     if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
         return None
     tag = release.get("tag_name", "")
@@ -162,15 +164,15 @@ def _release_update(release):
     if not isinstance(assets, list):
         return None
     candidates = [candidate for asset in assets if isinstance(asset, dict)
-                  if (candidate := _asset_update(release, asset)) is not None]
+                  if (candidate := _asset_update(release, asset, platform)) is not None]
     if not candidates or len({_version_key(item.version) for item in candidates}) != 1:
         # Multiple installer versions in one release make the intended update ambiguous.
         return None
     return min(candidates, key=lambda item: ("-x64.exe" not in item.asset_name.lower(), item.asset_name))
 
 
-def check_for_update(current_version: str, cancelled=lambda: False) -> ReleaseUpdate | None:
-    """Return the newest stable installer newer than ``current_version``.
+def check_for_update(current_version: str, cancelled=lambda: False, *, platform='win32') -> ReleaseUpdate | None:
+    """Return the newest stable platform package newer than ``current_version``.
 
     Cancellation raises InterruptedError; offline/API failures raise UpdateError.
     No installer is downloaded here, and an unchanged version is never offered.
@@ -199,7 +201,7 @@ def check_for_update(current_version: str, cancelled=lambda: False) -> ReleaseUp
         if not isinstance(releases, list):
             raise UpdateError("GitHub вернул некорректный список релизов.")
         for release in releases:
-            candidate = _release_update(release)
+            candidate = _release_update(release, platform)
             if candidate is not None and _version_key(candidate.version) > current:
                 if newest is None or _version_key(candidate.version) > _version_key(newest.version):
                     newest = candidate

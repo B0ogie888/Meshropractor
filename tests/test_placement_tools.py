@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 """Placement dialogs and reversible transactions using real VTK actors without GL."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -15,7 +16,7 @@ from PySide6.QtWidgets import QCheckBox, QLabel
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from test_desktop import APP
 from test_repair_tools import RepairPlotter
-from Meshropractor import MainWindow
+from main_window import MainWindow
 from part_supports import make_group, combined_mesh
 from placement_ribbon import PLACEMENT_COMMANDS
 from placement_tools import BASIC
@@ -46,7 +47,7 @@ class PlacementToolsTests(unittest.TestCase):
             if session is not None: session.dialog.reject()
         self.window.dirty = False
         self.window.close()
-        self.window.deleteLater()
+        delete_widget(self.window)
         APP.processEvents()
 
     def wait_for_job(self):

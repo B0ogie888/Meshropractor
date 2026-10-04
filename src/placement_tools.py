@@ -142,6 +142,7 @@ class PlacementSession(QObject):
         self.controls = [(control, control.isEnabled()) for control in controls]
         for control, _ in self.controls: control.setEnabled(False)
         window._placement_session = self
+        if hasattr(window.ui, 'part_inspector'): window.ui.part_inspector.schedule_refresh()
         window.ui.section_panel._make_widget()
         window.update_history_actions()
         self.dialog.changed.connect(self.changed)
@@ -175,7 +176,7 @@ class PlacementSession(QObject):
             matrix[:3, 3] = self.dialog.parameters()['delta']
             self.result = dict(matrices={row: matrix.copy() for row in self.rows}, reports=[], variants=[], platform=None)
             self.dialog.apply.setEnabled(bool(np.any(matrix[:3, 3])))
-            self.dialog.status.setText('Потяните деталь мышью или задайте смещение. Alt + мышь — вращение сцены.')
+            self.dialog.status.setText('Потяните деталь мышью или задайте смещение. ПКМ — вращение сцены.')
         else: self.dialog.status.setText('Подготовьте результат с выбранными параметрами.')
         self.preview()
 
@@ -318,7 +319,7 @@ class PlacementSession(QObject):
         if hasattr(self.plotter, 'setCursor'): self.plotter.setCursor(Qt.CrossCursor if enabled else Qt.ArrowCursor)
         if enabled:
             self.changed()
-            self.dialog.status.setText('Укажите поверхность левой кнопкой. Alt + мышь — вращение; Esc — завершить выбор.')
+            self.dialog.status.setText('Укажите поверхность левой кнопкой. ПКМ — вращение; Esc — завершить выбор.')
         else: self.preview()
 
     def ray(self, position):
@@ -406,6 +407,7 @@ class PlacementSession(QObject):
         if hasattr(self.plotter, 'removeEventFilter'): self.plotter.removeEventFilter(self)
         if hasattr(self.plotter, 'setCursor'): self.plotter.setCursor(Qt.ArrowCursor)
         self.window._placement_session = None
+        if hasattr(self.window.ui, 'part_inspector'): self.window.ui.part_inspector.schedule_refresh()
         for control, enabled in self.controls: control.setEnabled(enabled)
         self.window.ui.section_panel._make_widget(); self.window.update_history_actions()
         self.dialog.deleteLater(); self.deleteLater()

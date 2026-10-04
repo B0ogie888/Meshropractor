@@ -144,6 +144,7 @@ class HistoryMixin:
     def update_history_actions(self):
         if not hasattr(self, 'history'): return
         ready = (self._job is None and getattr(self, "_transform_session", None) is None
+                 and getattr(self, '_duplicate_session', None) is None
                  and getattr(self, '_repair_session', None) is None
                  and getattr(self, '_placement_session', None) is None)
         pending = self._history_timer.isActive()

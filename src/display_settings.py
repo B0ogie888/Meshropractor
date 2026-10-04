@@ -1,5 +1,5 @@
 """Persistent rendering preferences and the slicer's functional help commands."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 
 from PySide6.QtCore import QObject
@@ -52,11 +52,21 @@ def save_preferences(settings, preferences):
     settings.sync()
 
 
+def scalar_bar_contrast(plotter, background):
+    """Change legend lettering, never the deviation lookup table or mesh colours."""
+    color = QColor(background)
+    ink = (.08, .08, .08) if color.lightnessF() > .5 else (.92, .95, .93)
+    for bar in getattr(plotter, 'scalar_bars', {}).values():
+        for name in ('GetTitleTextProperty', 'GetLabelTextProperty', 'GetAnnotationTextProperty'):
+            getattr(bar, name)().SetColor(*ink)
+
+
 def apply_to_plotter(plotter, preferences, *, render=True):
     """Only rendering properties change; imported geometry and selection IDs stay intact."""
     if plotter is None:
         return
     plotter.set_background(preferences.background)
+    scalar_bar_contrast(plotter, preferences.background)
     performance = getattr(plotter, '_viewport_performance', None)
     if performance is not None:
         performance.configure(anti_aliasing=preferences.anti_aliasing, samples=preferences.samples,
@@ -77,7 +87,15 @@ class DisplaySettingsDialog(QDialog):
         description.setWordWrap(True)
         layout.addWidget(description)
         form = QFormLayout()
+        self.theme = getattr(parent, 'engineering_theme', None)
+        if self.theme is not None:
+            self.theme_choice = QComboBox()
+            self.theme_choice.addItem('Светлая', 'light'); self.theme_choice.addItem('Тёмная', 'dark')
+            self.theme_choice.setCurrentIndex(self.theme_choice.findData(self.theme.mode))
+            form.addRow('Тема интерфейса', self.theme_choice)
+            self.theme.changed.connect(self.sync_theme)
         self.background = QPushButton()
+        self.background.setProperty('preserveThemeColors', True)
         self.background.clicked.connect(self.choose_background)
         form.addRow('Фон рабочей сцены', self.background)
         self.antialiasing = QComboBox()
@@ -103,9 +121,10 @@ class DisplaySettingsDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.buttons.button(QDialogButtonBox.Apply).clicked.connect(self.apply)
-        self.buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(lambda: self.set_values(DisplayPreferences()))
+        self.buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(self.restore_defaults)
         layout.addWidget(self.buttons)
         self.set_values(preferences)
+        if self.theme is not None: self.theme_choice.currentIndexChanged.connect(self.preview_theme_background)
 
     def _set_background(self, color):
         self.background_color = color
@@ -130,7 +149,29 @@ class DisplaySettingsDialog(QDialog):
         return DisplayPreferences(self.background_color, aa, samples, self.interactive_edges.isChecked())
 
     def apply(self):
-        self.apply_preferences(self.preferences())
+        preferences = self.preferences()
+        if self.theme is not None: self.theme.set_mode(self.theme_choice.currentData())
+        self.apply_preferences(preferences)
+        self._set_background(preferences.background)
+
+    def preview_theme_background(self):
+        from ui_theme import THEME_COLORS
+        mode = self.theme_choice.currentData()
+        color = (self.theme.window.ui.display_preferences.background if mode == self.theme.mode else
+                 self.theme.window.settings.value('appearance/background/' + mode, THEME_COLORS[mode]['scene']))
+        self._set_background(color if QColor(color).isValid() else THEME_COLORS[mode]['scene'])
+
+    def sync_theme(self, mode):
+        self.theme_choice.setCurrentIndex(self.theme_choice.findData(mode))
+        self._set_background(self.theme.window.ui.display_preferences.background)
+
+    def restore_defaults(self):
+        preferences = DisplayPreferences()
+        if self.theme is not None:
+            from ui_theme import SCENE
+            self.theme_choice.setCurrentIndex(self.theme_choice.findData('light'))
+            preferences = replace(preferences, background=SCENE)
+        self.set_values(preferences)
 
     def accept(self):
         self.apply()
@@ -175,16 +216,26 @@ class DisplaySettingsController(QObject):
         dialog.exec()
 
     def show_shortcuts(self):
-        self._show_text('Горячие клавиши и управление', '''
+        panel_help = ('<h3>Боковые панели</h3><p>Ручки с названиями по краям слайсера и предеформации '
+                      'появляются только при скрытых панелях. У открытой панели на границе со сценой '
+                      'есть тонкий захват с тремя точками. Щелчок — скрыть или открыть; '
+                      'перетаскивание к сцене — вытянуть панель, к краю — свернуть. '
+                      'Tab переводит фокус на ручку; Enter или пробел переключают панель. '
+                      'Ширина и состояние сохраняются.</p>')
+        cube_help = ('Перетаскивание куба левой кнопкой вращает сцену; '
+                     'двойной щелчок по кубу возвращает изометрию. Работает в обеих сценах.<br>')
+        self._show_text('Горячие клавиши и управление', f'''
             <h3>Проект</h3><p><b>Ctrl+S</b> — сохранить проект.<br>
             <b>Ctrl+Z</b> — отменить действие.<br>
             <b>Ctrl+Y</b> или <b>Ctrl+Shift+Z</b> — повторить действие.</p>
-            <h3>Рабочая сцена</h3><p>В режиме обзора: левая кнопка мыши — вращение;
+            {panel_help}
+            <h3>Рабочая сцена</h3><p>Левая кнопка мыши — выбор детали или области;
             средняя кнопка — перемещение камеры; колесо — приближение и отдаление.<br>
             <b>Двойной щелчок левой кнопкой по детали в слайсере</b> — вращение вокруг центра детали.<br>
             <b>Двойной щелчок левой кнопкой по пустому месту</b> — вернуть центр вращения
             в центр плиты построения (по умолчанию). Выбор детали в списке центр не меняет.<br>
             Щелчок по грани куба — вид вдоль соответствующей оси.<br>
+            {cube_help}
             <b>Зажатая правая кнопка</b> — пунктирный круг в центре сцены.<br>
             Если начать движение <b>внутри круга</b> — вращение сцены в 3D;
             <b>снаружи круга</b> — поворот по/против часовой стрелки в плоскости экрана.<br>
@@ -194,11 +245,11 @@ class DisplaySettingsController(QObject):
             Щелчок по детали выбирает её; щелчок по пустому месту снимает выбор всех деталей.<br>
             ЛКМ от пустого места — рамка выбора деталей; <b>Shift + ЛКМ</b> — добавить
             детали щелчком или рамкой, <b>Ctrl + ЛКМ</b> — переключить их выбор.<br>
-            <b>Alt + ЛКМ</b> — вращать сцену также от пустого места.<br>
+            При открытой «Маркировке» рамка ЛКМ на выбранной детали задаёт область нанесения.<br>
             <b>Esc</b> — выйти из выбора поверхностей, измерения или установки поддержек.</p>
             <p>В режиме выбора поверхностей левая кнопка выбирает поверхность;
             <b>Shift</b> добавляет, <b>Ctrl</b> вычитает из выделения.
-            <b>Alt + левая кнопка</b> вращает сцену при выборе поверхностей и измерении.
+            Для вращения при выборе поверхностей и измерении используйте правую кнопку.
             <b>Alt + двойной щелчок левой кнопкой</b> меняет центр вращения слайсера
             без выхода из этих режимов.
             Режим задаётся на панели над сценой.</p>''')

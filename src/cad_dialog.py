@@ -1,4 +1,5 @@
 """Modeless CAD tools and a scalable icon; geometry is supplied by the controller."""
+from app_branding import app_icon
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -10,11 +11,18 @@ from display_settings import DIALOG_STYLE
 
 def cad_icon(size=32):
     """A CAD solid with a curved face, rendered at multiple icon resolutions."""
+    from ribbon_layout import asset_icon
+    icon = asset_icon('tools', 'cad')
+    if icon is not None:
+        resolutions = QIcon()
+        for pixels in sorted({24, 32, 48, 64, 96, max(1, int(size))}):
+            resolutions.addPixmap(icon.pixmap(pixels, pixels))
+        return resolutions
     svg = b'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
       <g stroke="#a8c4d7" stroke-width="1.5" stroke-linejoin="round" fill="none">
-        <path d="M5 11 20 4 35 12 35 29 20 37 5 28Z" fill="#3d647b"/>
-        <path d="M5 11 20 19 35 12 20 4Z" fill="#91c5e1"/>
-        <path d="M20 19 35 12 35 29 20 37Z" fill="#254f68"/>
+        <path d="M5 11 20 4 35 12 35 29 20 37 5 28Z"/>
+        <path d="M5 11 20 19 35 12 20 4Z"/>
+        <path d="M20 19 35 12 35 29 20 37Z"/>
         <path d="M20 19V37 M5 11 20 19"/>
         <path d="M6 25C13 14 27 35 34 20" stroke="#b2da77" stroke-width="2.5"/>
       </g>
@@ -43,7 +51,7 @@ class CADToolsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('CAD / STEP')
-        self.setWindowIcon(cad_icon())
+        self.setWindowIcon(app_icon())
         self.setModal(False)
         self.setMinimumWidth(590)
         self.setStyleSheet(DIALOG_STYLE + '''

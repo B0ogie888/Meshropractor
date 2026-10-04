@@ -287,6 +287,7 @@ class SectionPanel(QWidget):
             from part_supports import sync_actors
             sync_actors(self.window)
             self.window.workspace_tools.refresh_overlays()
+        if hasattr(self.window, 'analysis_tools'): self.window.analysis_tools.sync_highlights()
         plotter.render()
 
     def _origin(self, section):

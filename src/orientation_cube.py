@@ -62,6 +62,9 @@ class OrientationCube(QObject):
         self._disposed = False
         self._frame_key = None
         self._prior_cursor = None
+        # The engineering shell enables dragging as well as click-to-orient.
+        self.enable_drag = False
+        self._cube_drag = None
         self.renderer = vtkRenderer()
         self.renderer.SetInteractive(False)
         self.renderer.SetPreserveColorBuffer(True)
@@ -229,6 +232,8 @@ class OrientationCube(QObject):
         if obj is not self.plotter or not self.isVisible():
             return False
         kind = event.type()
+        if self.enable_drag and self._drag_event(event):
+            return True
         if kind == QEvent.Leave:
             self._set_hover(None)
         elif kind in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
@@ -252,6 +257,54 @@ class OrientationCube(QObject):
             return True
         return False
 
+    def _finish_drag(self):
+        drag, self._cube_drag = self._cube_drag, None
+        if drag is None: return
+        self.plotter.setCursor(drag['cursor'])
+        if drag['moved']:
+            self.plotter.iren.interactor.InvokeEvent('EndInteractionEvent')
+        self.plotter.render()
+
+    def _drag_event(self, event):
+        kind = event.type()
+        if kind in (QEvent.Hide, QEvent.WindowDeactivate, QEvent.FocusOut):
+            self._finish_drag()
+        if kind == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+            face = self.face_at(event.position() - self.geometry().topLeft())
+            if face is not None:
+                self._finish_drag(); self.orient(); event.accept(); return True
+        if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            face = self.face_at(event.position() - self.geometry().topLeft())
+            if face is not None:
+                self._set_hover(None, render=False)
+                self._cube_drag = dict(start=QPointF(event.position()), last=QPointF(event.position()),
+                                       face=face, moved=False, cursor=self.plotter.cursor())
+                self.plotter.setCursor(Qt.ClosedHandCursor)
+                event.accept(); return True
+        if kind == QEvent.MouseMove and self._cube_drag is not None:
+            drag = self._cube_drag
+            if not event.buttons() & Qt.LeftButton:
+                self._finish_drag(); return True
+            if not drag['moved'] and (event.position() - drag['start']).manhattanLength() >= 4:
+                drag['moved'] = True
+                self.plotter.iren.interactor.InvokeEvent('StartInteractionEvent')
+            if drag['moved']:
+                delta = event.position() - drag['last']
+                camera = self.plotter.camera
+                camera.Azimuth(-180 * delta.x() / SIZE)
+                camera.Elevation(180 * delta.y() / SIZE)
+                camera.OrthogonalizeViewUp()
+                self.plotter.reset_camera_clipping_range()
+                self.plotter.iren.interactor.InvokeEvent('InteractionEvent')
+                self.plotter.render()
+            drag['last'] = QPointF(event.position())
+            event.accept(); return True
+        if kind == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton and self._cube_drag is not None:
+            drag = self._cube_drag
+            if not drag['moved']: self.orient(*drag['face'])
+            self._finish_drag(); event.accept(); return True
+        return False
+
     def orient(self, axis=None, sign=1):
         camera = self.plotter.camera
         focus = np.asarray(camera.focal_point)
@@ -265,6 +318,7 @@ class OrientationCube(QObject):
     def dispose(self):
         if self._disposed:
             return
+        self._finish_drag()
         self._set_hover(None, render=False)
         self._disposed = True
         self.plotter.removeEventFilter(self)

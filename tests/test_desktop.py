@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QThread, Qt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from Meshropractor import MainWindow
+from main_window import MainWindow
 from background_tasks import FunctionWorker
 from project_store import ProjectState, load_project
 
@@ -62,7 +63,7 @@ class DesktopTests(unittest.TestCase):
     def cleanup_window(self):
         self.window.dirty = False
         self.window.close()
-        self.window.deleteLater()
+        delete_widget(self.window)
         APP.processEvents()
 
     def wait_for_job(self):
@@ -207,7 +208,7 @@ class DesktopTests(unittest.TestCase):
     def test_cancel_new_project_dialog_does_not_clear(self):
         self.window.cad_mesh = trimesh.creation.box()
         previous = self.window.cad_mesh
-        with patch("UI_Meshropractor.DialogNewProject.exec", return_value=0):
+        with patch("ui_base.DialogNewProject.exec", return_value=0):
             self.window.action_new_project()
         self.assertIs(self.window.cad_mesh, previous)
 
@@ -224,7 +225,7 @@ class DesktopTests(unittest.TestCase):
             dialog.selected_mode = 'slicer'
             return 1
 
-        with patch('UI_Meshropractor.DialogNewProject.exec', choose_slicer):
+        with patch('ui_base.DialogNewProject.exec', choose_slicer):
             for _ in range(2):
                 window.dirty = False
                 window.action_new_project()
@@ -644,7 +645,7 @@ class DesktopTests(unittest.TestCase):
         window.ui.tbl_parts.setRowHidden(1, True)
         with tempfile.TemporaryDirectory() as folder:
             path = str(Path(folder) / 'selected.stl')
-            with patch('Meshropractor.QFileDialog.getSaveFileName', return_value=(path, '')):
+            with patch('main_window.QFileDialog.getSaveFileName', return_value=(path, '')):
                 window.save_selected_slicer_parts()
             self.assertEqual(len(trimesh.load(path).faces), 12)
         window.unload_slicer_part()
@@ -768,7 +769,7 @@ class DesktopTests(unittest.TestCase):
         self.assertAlmostEqual(support_mesh(copied).bounds.mean(axis=0)[0], 8)
         with tempfile.TemporaryDirectory() as folder:
             path = str(Path(folder) / 'attached.stl')
-            with patch('Meshropractor.QFileDialog.getSaveFileName', return_value=(path, '')): window.save_selected_slicer_parts()
+            with patch('main_window.QFileDialog.getSaveFileName', return_value=(path, '')): window.save_selected_slicer_parts()
             self.assertGreater(len(trimesh.load(path).faces), len(body.faces))
 
     def test_measurement_panel_numeric_results_and_cleanup(self):

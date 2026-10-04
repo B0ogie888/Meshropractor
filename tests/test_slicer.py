@@ -5,7 +5,7 @@ import unittest
 import trimesh
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from CL_Slicer import slice_stl_to_cls
+from cls_slicer import slice_stl_to_cls
 
 
 class SlicerTests(unittest.TestCase):

@@ -51,6 +51,9 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         self.ui.action_save.setShortcut("Ctrl+S")
 
     def mark_dirty(self, *args):
+        for name in ('part_controls', 'predef_controls', 'part_inspector'):
+            panel = getattr(self.ui, name, None)
+            if panel is not None: panel.schedule_refresh()
         if not getattr(self, "_restoring", True):
             self.dirty = True
             self.update_title()
@@ -65,11 +68,14 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
 
     def update_title(self, project_name=None):
         name = project_name or (os.path.basename(self.project_path) if self.project_path else "Без названия")
-        title = f"Meshropractor — {name}{' *' if self.dirty else ''}"
+        title = f"{getattr(self, 'display_name', 'Meshropractor')} — {name}{' *' if self.dirty else ''}"
         self.setWindowTitle(title)
         self.lbl_app_title.setText(title)
 
     def _busy(self):
+        if getattr(self,'_duplicate_session',None) is not None and not getattr(self,'_applying_duplicate',False):
+            self.log('Завершите дублирование в открытом окне инструмента.')
+            return True
         if getattr(self, '_placement_session', None) is not None and not getattr(self, '_applying_placement', False):
             self.log("Завершите размещение в открытом окне инструмента.")
             return True
@@ -111,6 +117,11 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         controls.append(self.ui.btn_repair_models)
         controls.append(self.ui.btn_cad_tools)
         if hasattr(self.ui, 'surface_toolbar'): controls.append(self.ui.surface_toolbar)
+        if hasattr(self.ui, 'part_controls'): controls.append(self.ui.part_controls)
+        if hasattr(self.ui, 'predef_controls'): controls.append(self.ui.predef_controls)
+        if hasattr(self.ui, 'part_inspector'): controls.append(self.ui.part_inspector)
+        if hasattr(self.ui, 'parts_browser'): controls.append(self.ui.parts_browser)
+        controls += getattr(self.ui, 'predef_browsers', [])
         controls.append(self.ui.measurement_panel)
         if hasattr(self, 'workspace_tools') and self.workspace_tools.supports.panel:
             controls.append(self.workspace_tools.supports.panel)
@@ -163,6 +174,9 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         completed = self._job_completed
         next_job, self._job_next = getattr(self, '_job_next', None), None
         self._job = None
+        if hasattr(self.ui, 'part_controls'): self.ui.part_controls.schedule_refresh()
+        if hasattr(self.ui, 'predef_controls'): self.ui.predef_controls.schedule_refresh()
+        if hasattr(self.ui, 'part_inspector'): self.ui.part_inspector.schedule_refresh()
         if hasattr(self, 'workspace_tools'): self.workspace_tools.cancel_button.hide()
         self._job_callback = None
         for control, enabled in self._job_previous_enabled:
@@ -224,6 +238,8 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         session = getattr(self, '_transform_session', None)
         if session is not None:
             session.dialog.reject()
+        duplicate = getattr(self,'_duplicate_session',None)
+        if duplicate is not None: duplicate.dialog.reject()
         if self._job:
             event.ignore()
             self._closing = True
@@ -231,10 +247,20 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             if not (isinstance(self._job, FunctionWorker) and self._job.function is save_project):
                 self.cancel_current_job()
             return
-        if not getattr(self, '_update_exit', False) and not self._confirm_discard(self.close):
+        marking_previews = getattr(self,'marking_previews',None)
+        if marking_previews is not None and not marking_previews.stop_for_close():
             event.ignore()
             return
+        if not getattr(self, '_update_exit', False) and not self._confirm_discard(self.close):
+            if marking_previews is not None: marking_previews.resume()
+            event.ignore()
+            return
+        if marking_previews is not None: marking_previews.dispose()
         self._history_timer.stop()
+        if hasattr(self, 'workspace_tools'): self.workspace_tools.part_selection_timer.stop()
+        if hasattr(self.ui, 'part_controls'): self.ui.part_controls.timer.stop()
+        if hasattr(self.ui, 'predef_controls'): self.ui.predef_controls.timer.stop()
+        if hasattr(self.ui, 'part_inspector'): self.ui.part_inspector.timer.stop()
         if hasattr(self, 'drop_imports'):
             self.drop_imports.clear()
         if hasattr(self, 'workspace_tools') and self.workspace_tools.cube:
@@ -307,6 +333,12 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
                               icp=self.ui.chk_icp.isChecked(), align_tolerance=self.ui.sb_align_tolerance.value(), align_coverage=self.ui.sb_align_coverage.value(), limit=self.ui.sb_max_deviation.value(),
                               min_coverage=self.ui.sb_min_coverage.value(), heat_limit=self.ui.sliders["heat_limit"][0].value())
         state.settings['texture_display'] = bool(getattr(getattr(self, 'display_tools', None), 'state', {}).get('texture', False))
+        from analysis_tools import DEFAULTS
+        analysis = getattr(self, 'analysis_tools', None)
+        state.settings['analysis'] = dict(params=deepcopy(analysis.params) if analysis else dict(DEFAULTS),
+            annotations=deepcopy(analysis.annotations) if analysis else [],
+            title=analysis.title if analysis else 'Отчёт Meshropractor', author=analysis.author if analysis else '',
+            precision=self.ui.measurement_panel.decimals)
         return state
 
     def save_project(self, checked=False, *, save_as=False, after_save=None):
@@ -351,7 +383,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             return
         if not self._confirm_discard(self.action_new_project):
             return
-        from UI_Meshropractor import DialogNewProject
+        from ui_base import DialogNewProject
         dialog = DialogNewProject(self)
         if not dialog.exec():
             return
@@ -438,6 +470,14 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             if hasattr(self, 'texture_tools'):
                 self.texture_tools.active = None
                 self.texture_tools.show(bool(settings.get('texture_display', False)))
+            if hasattr(self, 'analysis_tools'):
+                from analysis_tools import DEFAULTS
+                analysis = settings.get('analysis', {})
+                self.analysis_tools.params = dict(DEFAULTS, **analysis.get('params', {}))
+                self.analysis_tools.annotations = deepcopy(analysis.get('annotations', []))
+                self.analysis_tools.title = analysis.get('title', 'Отчёт Meshropractor')
+                self.analysis_tools.author = analysis.get('author', '')
+                self.ui.measurement_panel.decimals = max(0, min(6, int(analysis.get('precision', 4))))
             for key, control, default in (("align_tolerance", self.ui.sb_align_tolerance, 0), ("align_coverage", self.ui.sb_align_coverage, 30), ("points", self.ui.sb_points, 20000), ("factor_xy", self.ui.sb_factor, 1.0),
                                           ("factor_z", self.ui.sb_factor_z, 1.0), ("limit", self.ui.sb_max_deviation, 5.0),
                                           ("min_coverage", self.ui.sb_min_coverage, 30.0),
@@ -506,6 +546,7 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
             if col == 2: checkbox.toggled.connect(lambda value, r=row: self._on_vis_checkbox_changed(r, value))
             checkbox.toggled.connect(self.mark_dirty)
         button = QPushButton()
+        button.setProperty('preserveThemeColors', True)
         button.setFixedSize(24, 24)
         button.setStyleSheet(f"background-color: {pv.Color(color).hex_rgb}; border: 1px solid #555;")
         button.clicked.connect(lambda checked=False, r=row, b=button: self.pick_slicer_part_color(r, b))
@@ -798,6 +839,8 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
 
     def _sync_heatmap_legend(self):
         if self.ui.plotter is None: return
+        from display_settings import scalar_bar_contrast
+        scalar_bar_contrast(self.ui.plotter, self.ui.display_preferences.background)
         visible = any(key.startswith("Heatmap_") and actor is not None and actor.GetVisibility() for key, actor in self.actors.items())
         for bar in self.ui.plotter.scalar_bars.values():
             bar.SetVisibility(visible)
@@ -813,5 +856,13 @@ class ProjectController(HistoryMixin, SlicerToolsMixin, QMainWindow):
         self.actors[key] = self.ui.plotter.add_mesh(data, scalars="Deviation", cmap="coolwarm", clim=[-limit, limit],
                                                   name=key, show_scalar_bar=True,
                                                   scalar_bar_args=dict(title="Отклонение (мм)", color="black", fmt="%.3f"))
+        from display_tools import scene_font
+        font = scene_font()
+        if font:
+            from vtkmodules.vtkCommonCore import VTK_FONT_FILE
+            for bar in self.ui.plotter.scalar_bars.values():
+                for name in ('GetTitleTextProperty', 'GetLabelTextProperty', 'GetAnnotationTextProperty'):
+                    prop = getattr(bar, name)()
+                    prop.SetFontFamily(VTK_FONT_FILE); prop.SetFontFile(font)
         self.scene_models[key] = dict(key=key, kind="Heatmap", name=key, mesh=mesh, deviations=np.asarray(deviations).copy())
         self._activate_heatmap(key)

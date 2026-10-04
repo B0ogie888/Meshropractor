@@ -12,6 +12,7 @@ from PySide6.QtCore import QEvent, QPointF, QRect, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QWidget
 from vtkmodules.vtkRenderingCore import vtkRenderer, vtkRenderWindow, vtkRenderWindowInteractor
+from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from scene_navigation import SceneNavigation, SceneOutline
 
@@ -19,6 +20,22 @@ APP = QApplication.instance() or QApplication([])
 
 
 class SceneNavigationTests(unittest.TestCase):
+    def test_left_press_keeps_picking_but_never_starts_camera_rotation(self):
+        interactor = self.plotter.iren.interactor
+        interactor.SetRenderWindow(self.plotter.render_window)
+        style = vtkInteractorStyleTrackballCamera(); interactor.SetInteractorStyle(style)
+        # Emulate PyVista's capture callback that used to start the drag.
+        style.AddObserver('LeftButtonPressEvent',lambda *_:style.OnLeftButtonDown())
+        self.navigation.disable_left_rotation()
+        picked = []
+        interactor.AddObserver('LeftButtonPressEvent',lambda *_:picked.append(True))
+        interactor.SetEventPosition(450,300)
+        style.InvokeEvent('LeftButtonPressEvent')
+        self.assertEqual(style.GetState(),0)
+        interactor.InvokeEvent('LeftButtonPressEvent')
+        self.assertEqual(picked,[True])
+        self.assertEqual(style.GetState(),0)
+
     def setUp(self):
         self.plotter = QWidget()
         self.plotter.resize(900, 600)

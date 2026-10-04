@@ -176,7 +176,14 @@ def apply_cad_transform(mesh, matrix):
             points = mesh.vertices[start:start + 100000] @ transform[:3, :3].T + transform[:3, 3]
             if not np.isfinite(points).all():
                 raise ValueError('Преобразование создаёт неконечные координаты.')
+    marking_data = mesh.metadata.get('marking_plans')
+    marking_valid = False
+    if marking_data:
+        from marking_geometry import digest as marking_digest, transform_plans
+        marking_valid = marking_data.get('digest') == marking_digest(mesh)
     mesh.apply_transform(transform)
+    if marking_valid:
+        transform_plans(mesh, transform, True)
     if payload is not None:
         payload['proxy_digest'] = mesh_digest(mesh)
         payload['payload_digest'] = _payload_digest(payload)

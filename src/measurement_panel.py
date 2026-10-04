@@ -14,11 +14,12 @@ class MeasurementPanel(QWidget):
         self.hits = []
         self.names = []
         self.serial = 0
+        self.decimals = 4
         layout = QVBoxLayout(self)
         layout.setContentsMargins(3, 3, 3, 3)
         self.tabs = QTabWidget()
         self.modes = []
-        for title, values in [('Расстояние', ['Точка — точка', 'Точка — плоскость', 'Точка — поверхность детали', 'Плоскость — плоскость']),
+        for title, values in [('Расстояние', ['Точка — точка', 'Точка — плоскость', 'Точка — поверхность детали', 'Плоскость — плоскость', 'Толщина по нормали']),
                               ('Окружность', ['Радиус и диаметр по 3 точкам']), ('Угол', ['Три точки (вторая — вершина)', 'Между плоскостями'])]:
             page = QWidget()
             row = QHBoxLayout(page)
@@ -63,6 +64,7 @@ class MeasurementPanel(QWidget):
         self.hits = []
         self.hint.setText('Выберите три точки на поверхности; Esc — завершить.' if self.active[0] == 1 or self.active == (2, 0)
                           else 'Выберите первую точку/поверхность, затем вторую. Esc — завершить.')
+        if self.active == (0, 4): self.hint.setText('Выберите точку на стенке: измерение вдоль внутренней нормали; Esc — завершить.')
         self.workspace.plotter.setCursor(Qt.CrossCursor)
         self.workspace.plotter.setFocus()
 
@@ -96,6 +98,7 @@ class MeasurementPanel(QWidget):
         self.workspace.plotter.add_mesh(pv.PolyData(np.array([item[2] for item in self.hits])), color='#9b2ec8',
                                        point_size=12, render_points_as_spheres=True, name='measurement_pending', pickable=False)
         count = 3 if self.active[0] == 1 or self.active == (2, 0) else 2
+        if self.active == (0, 4): count = 1
         if len(self.hits) < count:
             self.hint.setText(f'Выбрано точек: {len(self.hits)} из {count}. Укажите следующую.')
             return
@@ -111,23 +114,29 @@ class MeasurementPanel(QWidget):
         geometry = None
         if mode == (0, 0):
             value, delta = distance(*points)
-            text = f'{value:.4f} мм; ΔX={delta[0]:.4f}, ΔY={delta[1]:.4f}, ΔZ={delta[2]:.4f}'
+            text = f'{value:.{self.decimals}f} мм; ΔX={delta[0]:.{self.decimals}f}, ΔY={delta[1]:.{self.decimals}f}, ΔZ={delta[2]:.{self.decimals}f}'
         elif mode == (0, 1):
             end, value = project_plane(points[0], points[1], normals[1])
             points[1] = end
-            text = f'До плоскости грани: {value:.4f} мм (продолжение плоскости)'
+            text = f'До плоскости грани: {value:.{self.decimals}f} мм (продолжение плоскости)'
         elif mode == (0, 2):
             data = self.window.slicer_parts[self.hits[1][0]]['mesh_pv']
             _, end = data.find_closest_cell(points[0], return_closest_point=True)
             points[1] = end
             value, _ = distance(*points)
-            text = f'До поверхности детали: {value:.4f} мм'
+            text = f'До поверхности детали: {value:.{self.decimals}f} мм'
         elif mode == (0, 3):
             degrees = normal_angle(*normals)
             if degrees > 1e-4:
-                raise ValueError(f'Плоскости пересекаются (угол {degrees:.4f}°); расстояние между их продолжениями равно 0')
+                raise ValueError(f'Плоскости пересекаются (угол {degrees:.{self.decimals}f}°); расстояние между их продолжениями равно 0')
             points[1], value = project_plane(points[0], points[1], normals[1])
-            text = f'Между параллельными плоскостями: {value:.4f} мм'
+            text = f'Между параллельными плоскостями: {value:.{self.decimals}f} мм'
+        elif mode == (0, 4):
+            from analysis_geometry import point_thickness
+            mesh = self.window.slicer_parts[self.hits[0][0]]['mesh']
+            end, value = point_thickness(mesh, points[0], normals[0])
+            points = np.array([points[0], end])
+            text = f'Толщина по нормали: {value:.{self.decimals}f} мм (сетка)'
         elif mode[0] == 1:
             center, radius, normal = circle(points)
             u = (points[0] - center) / radius
@@ -135,11 +144,11 @@ class MeasurementPanel(QWidget):
             t = np.linspace(0, 2 * np.pi, 129)
             ring = center + radius * (np.cos(t)[:, None] * u + np.sin(t)[:, None] * v)
             geometry = pv.lines_from_points(ring)
-            text = f'R={radius:.4f} мм; Ø={2*radius:.4f} мм; центр ({center[0]:.4f}, {center[1]:.4f}, {center[2]:.4f})'
+            text = f'R={radius:.{self.decimals}f} мм; Ø={2*radius:.{self.decimals}f} мм; центр ({center[0]:.{self.decimals}f}, {center[1]:.{self.decimals}f}, {center[2]:.{self.decimals}f})'
         elif mode == (2, 0):
-            text = f'Угол: {angle(points):.4f}°'
+            text = f'Угол: {angle(points):.{self.decimals}f}°'
         else:
-            text = f'Угол между плоскостями: {normal_angle(*normals):.4f}°'
+            text = f'Угол между плоскостями: {normal_angle(*normals):.{self.decimals}f}°'
         if geometry is None: geometry = pv.lines_from_points(points)
         plotter = self.workspace.plotter
         self.serial += 1

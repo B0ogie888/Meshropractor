@@ -34,6 +34,9 @@ GROUPS = (('Главная', ('new', 'bake', 'select', 'edit', 'update', 'copy',
 
 
 def texture_icon(operation):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('texture', operation)
+    if icon is not None: return icon
     motifs = {
         'new': '<path d="M34 4V16M28 10H40"/>', 'bake': '<path d="M7 8 17 3 27 9 17 16ZM7 8V20L17 27 27 20V9M17 16V27"/>',
         'select': '<path d="M28 24 40 32 34 34 31 41Z"/>', 'edit': '<path d="M9 38 13 28 34 7 40 13 19 34ZM30 11 36 17"/>',
@@ -49,9 +52,10 @@ def texture_icon(operation):
         'colors': '<path d="M6 14 24 4 42 14 24 24Z" fill="#e6ba74"/><path d="M6 14V35L24 45V24Z" fill="#a2c880"/><path d="M24 24 42 14V35L24 45Z" fill="#74bce0"/>',
     }
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">'
-           '<path d="M9 17H35V39H9Z" fill="#395461" stroke="#c5d0d7"/>'
-           '<path d="M9 17H17V25H9ZM25 17H35V25H25ZM17 25H25V33H17ZM9 33H17V39H9ZM25 33H35V39H25Z" fill="#81c4d2"/>'
-           '<g fill="none" stroke="#e6ba74" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round">' + motifs[operation] + '</g></svg>')
+           '<path d="M9 17H35V39H9ZM9 25H35M9 33H35M17 17V39M26 17V39" '
+           'fill="none" stroke="#c5d0d7" stroke-width="1.5"/>'
+           '<g fill="none" stroke="#e6ba74" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round">' +
+           motifs[operation].replace('fill="#e6ba74"', 'fill="none"').replace('fill="#a2c880"', 'fill="none"').replace('fill="#74bce0"', 'fill="none"') + '</g></svg>')
     icon = QIcon()
     for size in (24, 48, 96):
         pixmap = QPixmap(); pixmap.loadFromData(svg.replace('width="48" height="48"', f'width="{size}" height="{size}"').encode(), 'SVG'); icon.addPixmap(pixmap)

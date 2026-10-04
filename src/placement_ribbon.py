@@ -63,6 +63,9 @@ _GROUPS = (
 
 
 def placement_icon(operation):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('placement', operation)
+    if icon is not None: return icon
     """Reuse familiar transform symbols; draw the other placement actions individually."""
     basic_icons = {'move': 3, 'rotate': 4, 'scale': 5, 'mirror': 6}
     if operation in basic_icons:

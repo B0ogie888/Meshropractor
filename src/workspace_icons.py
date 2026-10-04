@@ -8,6 +8,9 @@ SUPPORT_NAMES = ['Генерация поддержек', 'Поддержки д
 
 
 def workspace_icon(kind):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('workspace', kind)
+    if icon is not None: return icon
     paths = {
         'platform': '<path d="M4 29 23 19 44 29 24 40Z M4 29V34L24 45 44 34V29 M10 32V40M38 33V40"/>',
         'part': '<path d="M10 12 25 4 40 12V31L25 40 10 31Z M10 12 25 21 40 12 M25 21V40"/>',

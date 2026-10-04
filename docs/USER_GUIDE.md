@@ -13,6 +13,42 @@
 
 ## Workflow
 
+### Interface and startup
+
+Launch `Meshropractor.pyw` or run `python src/Meshropractor.py`.
+Meshropractor 0.3 uses one interface; previous preferences migrate on first launch.
+The animated startup screen follows real initialization stages and closes when
+the main window is ready. The compact parts browser supports
+click/Ctrl/Shift selection, an eye control and a color marker per part.
+The search field has been removed; sections keep their compact spacing when maximized.
+Controls below it edit the selected parts' visibility, color, shading and transparency
+with Undo/Redo. Enable “Табличный вид · все параметры” to open the full table.
+The duplicate top menu is hidden; “Журнал” opens the operation log. Existing `.mrp` projects and modeling tools are preserved.
+
+The right slicer panel shows the selected part or group: CAD/BREP/mesh type,
+units, XYZ dimensions, geometry counts and supports. Dimensions use the committed
+mesh without supports; multiple parts show their combined bounding box. Values
+are in mm: STEP is converted on import, while STL coordinates are interpreted
+as mm. Buttons open Move, Rotate, Scale, Mirror, CAD bodies/faces and selected-part
+export. The dimensions icon beside Settings hides or opens the panel; visibility
+and its resized width are saved. Short windows allow vertical scrolling.
+
+Named grips on both outer edges of the slicer and pre-deformation workspace
+remain visible when a sidebar is collapsed. Click to restore it, drag inward
+to open or resize it, or drag toward the outer edge to collapse it.
+Use Tab to focus a grip and Enter/Space to toggle it. Both panels' widths and
+visibility are saved separately for each workspace.
+
+The moon/sun button beside the window controls switches light/dark themes.
+The same choice is available in Display Settings. Light is the default; the
+choice and each theme's scene background are saved. Model and deviation colors stay intact.
+Pre-deformation uses matching CAD, scan, heatmap and result lists with selection
+properties. Its four stages are above the scene, with scrollable parameters on the right.
+
+Drag the orientation cube with LMB to rotate the scene, click a face
+to select its view, or double-click the cube for isometric view. This works in
+both the slicer and pre-deformation workspace.
+
 ### Textures and colors
 
 The **Textures** ribbon provides 15 working commands: image layers on parts or
@@ -122,7 +158,7 @@ at import. The view cube's colored axes remain attached to one corner while rota
 The viewport toolbar selects triangles, connected planes, smooth patches, connected
 shells, a surface brush or visible cells inside a rectangle. First select the target
 parts. Selected faces are orange and follow clipping planes; Shift adds, Ctrl removes,
-Alt allows camera navigation and Esc resets the tool. Face selection is temporary.
+The right button allows camera navigation and Esc resets the tool. Face selection is temporary.
 Click a part to select it; Shift/Ctrl modify part selection. Unload and selected export
 use checked parts in the current scene. Right-click opens a radial move/rotate/export/
 unload menu, while a right-button drag retains camera navigation. Unload supports undo.
@@ -131,7 +167,8 @@ Holding the right button shows an unfilled dashed circle in both workspaces.
 Start a right-drag inside it to orbit in 3D; start outside it to roll the view
 clockwise/counterclockwise in the screen plane. The gesture mode stays fixed
 until release, even if the pointer crosses the circle. This also works while
-selecting surfaces, measuring or placing supports; Alt is optional for navigation.
+selecting surfaces, measuring or placing supports. The left button only selects
+parts or regions; it does not rotate the scene.
 Selection rectangles and the build-volume frame contain outlines only.
 
 ### Support generation
@@ -190,6 +227,8 @@ caps are generated. Planes are saved in `.mrp`; build platforms remain unclipped
 STEP imports retain BREP by default. The slicer can import bodies as separate parts;
 predeformation keeps an assembly together as the nominal CAD model. Select complete
 CAD faces using the CAD button above the scene and generate supports owned by that part.
+Open CAD tools from the selected part's right-hand inspector
+or beside the CAD import controls in predeformation.
 The CAD / STEP panel offers retessellation, body separation, exact CAD properties,
 STEP export and explicit conversion to mesh. Placement, duplication, scaling and mirroring
 retain BREP; mesh edits invalidate it and prevent exporting stale CAD. Projects embed
@@ -198,14 +237,20 @@ See [CAD workflow and limitations](CAD.md).
 
 ### Display ribbon
 
+The build plate is white with no permanent grid. **Platform grid** toggles an
+origin-aligned grid: faint 1 mm lines and stronger 10 mm lines. A 220 × 220 mm
+plate has 11 large cells from its centre to each edge. Other plate sizes keep
+the same spacing, with partial cells at the edges when needed. The plate
+remains translucent when viewed from below.
+
 25 functional commands cover camera views, smooth shading, simplified display, grids,
 rulers, zones, bounds, mass centers, labels, colors, overhangs, geometric checks,
 volume/material/packing estimates, PNG export, clipboard and printing. The three
 statistics commands form a vertical list and update the top-right overlay for selected
 parts and their supports. Set material density and price using the cost button's arrow.
 Click a part to select it, click empty space to clear selection, or drag a rectangle
-from empty space to select several parts. Shift adds, Ctrl toggles, and Alt lets you
-rotate the scene from empty space. Display toggles
+from empty space to select several parts. Shift adds and Ctrl toggles. Hold the right
+button inside the dashed circle to orbit, or outside to roll. Display toggles
 do not modify source geometry. Geometric checks are not a print simulation.
 See [Display commands](DISPLAY.md).
 
@@ -214,18 +259,31 @@ the selected row; wheel events on unfocused fields do not edit another plane.
 
 ## Slicer tools and history
 
-The Tools ribbon offers box/cylinder/sphere creation, duplication, XYZ copy arrays,
+The Tools ribbon offers ten primitives, including tubes, frustums, prisms, tori,
+rounded/chamfered boxes, linked radius/diameter fields, dimensioned sketches and
+chordal tolerance or manual tessellation. See [part creation](PRIMITIVES.md).
+It also offers duplication, XYZ copy arrays,
 translation, rotation in degrees, scaling and mirroring. Check the parts in the current
 scene's selection column. Rotations use world X, then Y, then Z; rotation/scale/mirror
 can use group/individual/custom centers. Transform dialogs are modeless: Apply records
 one history step and stays open, Yes applies and closes, Close discards only unapplied
 preview. Create Copy preserves originals. Copy arrays preserve the
-original cell and use explicit XYZ pitch (no collision-free packing).
+original cell. [Matrix duplication](DUPLICATION.md) uses XYZ gaps between the
+bounds of the selected group, including child supports. Translucent virtual
+copies update in the scene before confirmation; cancelling removes them without
+changing the project. CAD, supports and metadata follow confirmed copies.
 
 Move supports linked absolute/relative coordinates, per-axis min/center/max/custom
 anchors, individual origins, return to the opening position and two-point line constraints.
-Rotation supports arbitrary lines, surface-picked centers and angular snapping on its
-3D handles. Scale links factors, final dimensions and differences, with uniform scaling,
+Anchor modes and snapping preferences are remembered automatically for subsequent
+parts; each new move starts with zero displacement. Custom coordinate fields are
+faint and disabled unless their axis uses the Custom option. Drag compact arrows
+with the left mouse button for single-axis movement, or the translucent XY/XZ/YZ
+planes for movement along two axes while keeping the third coordinate fixed.
+Rotation supports arbitrary lines, surface-picked centers and thin X/Y/Z rings.
+The outer ring rotates about the camera view axis, in the screen plane. Angular
+snapping applies to the selected ring, including the outer one.
+Scale links factors, final dimensions and differences, with uniform scaling,
 two-point measurement fitting and a persistent editable preset library. Mirror supports
 principal or three-point/point-normal planes. Rotation and scale can preserve each part's
 minimum Z. Points are picked on original surfaces; preview is temporarily hidden while
@@ -254,8 +312,11 @@ Version 1.x and 2.0 projects can be opened; new saves use 2.1 and cannot be open
 ## Scope and limitations
 
 STL/STEP import, STL export, section clipping, alignment, deviation analysis, neural compensation, scene/platform
-management, Undo/Redo and project persistence are available. Separate report and
-inspection modules, unimplemented ribbon commands and desktop CLS export are disabled.
+management, Undo/Redo and project persistence are available. The
+[Analysis and reports ribbon](ANALYSIS_REPORTS.md) checks volumetric intersections,
+sampled wall thickness and slice areas, estimates time/cost, records actual values
+and exports HTML/PDF/JSON/CSV. See the dedicated guide for approximation limits.
+Unimplemented ribbon commands and desktop CLS export are disabled.
 The experimental CLS writer has not been validated against production machines.
 Automatic packing accounts for keep-out zones using conservative bounding boxes. Manual transforms do not enforce collision avoidance.
 

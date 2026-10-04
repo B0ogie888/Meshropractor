@@ -71,8 +71,15 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; AppUserModelID: "b0ogie888.meshropractor"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; AppUserModelID: "b0ogie888.meshropractor"; Tasks: desktopicon
+
+[InstallDelete]
+; Remove only the two obsolete application shortcuts during an upgrade.
+Type: files; Name: "{autoprograms}\{#MyAppName} Classic.lnk"
+Type: files; Name: "{autoprograms}\{#MyAppName} New.lnk"
+Type: files; Name: "{autodesktop}\{#MyAppName} Classic.lnk"
+Type: files; Name: "{autodesktop}\{#MyAppName} New.lnk"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser

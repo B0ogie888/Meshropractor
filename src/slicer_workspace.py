@@ -120,6 +120,7 @@ class SlicerWorkspace(QObject):
 
     def busy(self):
         return bool(self.window._job or getattr(self.window, '_transform_session', None)
+                    or getattr(self.window, '_duplicate_session', None)
                     or getattr(self.window, '_repair_session', None) or getattr(self.window, '_placement_session', None))
 
     def set_mode(self, mode):
@@ -158,6 +159,8 @@ class SlicerWorkspace(QObject):
         self.count.setText('Грани: 0')
 
     def invalidate(self, row):
+        inspector = getattr(self.window.ui, 'part_inspector', None)
+        if inspector is not None: inspector.invalidate(row)
         self.measurements.clear()
         self.topologies.pop(row, None)
         self.selection.pop(row, None)
@@ -414,7 +417,15 @@ class SlicerWorkspace(QObject):
                 hit = self.picker(self.left_start, selected_only=False)
                 self.part_box_candidate = hit is None or bool(event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
                 self.part_box_operation = self.part_operation(event)
-                if self.part_box_candidate: return True
+                # Selection owns the whole gesture, including a press on a
+                # part. Passing only the press to VTK left its rotation state
+                # active when this tool consumed the corresponding release.
+                return True
+        if kind in (QEvent.Hide, QEvent.FocusOut, QEvent.WindowDeactivate):
+            self.left_start = None; self.left_down = False
+            self.part_box_candidate = self.part_box_active = False
+            self._tool_click = False
+            if self.rubber: self.rubber.hide()
         if kind == QEvent.MouseMove and self.part_box_candidate:
             if not event.buttons() & Qt.LeftButton:
                 self.part_box_candidate = self.part_box_active = False
@@ -427,6 +438,10 @@ class SlicerWorkspace(QObject):
                     self.rubber.show()
             return True
         if kind == QEvent.MouseMove and self.left_down:
+            if not event.buttons() & Qt.LeftButton:
+                self.left_down = False
+                if self.rubber: self.rubber.hide()
+                return True
             if self.mode == 'brush': self.select_at(event.position().toPoint(), self.stroke_operation)
             if self.mode == 'rectangle': self.rubber.setGeometry(QRect(self.left_start, event.position().toPoint()).normalized())
             return True
@@ -455,4 +470,5 @@ class SlicerWorkspace(QObject):
                 self.select_parts([hit[0]] if hit else [], self.part_operation(event))
                 self.left_start = None
                 return True
+        if kind == QEvent.MouseMove and event.buttons() & Qt.LeftButton: return True
         return False

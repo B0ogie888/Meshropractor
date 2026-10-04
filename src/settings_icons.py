@@ -8,6 +8,9 @@ SETTINGS_COMMANDS = ('Параметры', 'Горячие клавиши', 'С�
 
 
 def settings_icon(name):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('settings', name)
+    if icon is not None: return icon
     shapes = {
         'Параметры': '<path d="M9 10V38M24 10V38M39 10V38"/><path d="M4 18H14V25H4ZM19 28H29V35H19ZM34 13H44V20H34Z" fill="#67b9ec"/>',
         'Горячие клавиши': '<rect x="4" y="11" width="40" height="27" rx="4"/><path d="M10 18H13M19 18H22M28 18H31M37 18H39M10 25H13M19 25H22M28 25H31M37 25H39M13 32H34"/>',

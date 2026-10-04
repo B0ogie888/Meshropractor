@@ -86,6 +86,9 @@ _GROUPS = (
 
 
 def repair_icon(operation):
+    from ribbon_layout import asset_icon
+    icon = asset_icon('repair', operation)
+    if icon is not None: return icon
     """Original SVG symbols; colour highlights the part affected by each operation."""
     mesh = '<path d="M7 35 12 12 31 6 42 25 31 42ZM12 12 24 24 31 6M7 35 24 24 31 42M24 24 42 25"/>'
     triangle = '<path d="M6 38 24 7 42 38Z"/>'
@@ -146,6 +149,7 @@ class _RibbonScrollArea(QScrollArea):
 
 
 def create_repair_ribbon():
+    from ribbon_layout import compact_button_column
     scroll = _RibbonScrollArea()
     scroll.setObjectName('repair_ribbon')
     scroll.setWidgetResizable(True)
@@ -203,8 +207,13 @@ def create_repair_ribbon():
             button.setFixedWidth(max(72, max(metrics.horizontalAdvance(line)
                                             for line in _CAPTIONS[operation].split('\n')) + 16))
             button.setFixedHeight(56)
-            row.addWidget(button)
             buttons[operation] = button
+            if operation in ('unify', 'split', 'slivers', 'duplicates'): continue
+            if operation == 'remove_small':
+                row.addWidget(compact_button_column([buttons[key] for key in ('unify', 'split', 'remove_small')]))
+            elif operation == 'overlaps':
+                row.addWidget(compact_button_column([buttons[key] for key in ('slivers', 'duplicates', 'overlaps')]))
+            else: row.addWidget(button)
         group.addLayout(row)
         label = QLabel(title)
         label.setAlignment(Qt.AlignCenter)

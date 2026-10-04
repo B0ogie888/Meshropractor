@@ -82,7 +82,21 @@ class SceneNavigation(QObject):
         self.dragged = False
         self.interacting = False
         self.mode = None
+        self.camera_style = None
+        self.disable_left_rotation()
         plotter.installEventFilter(self)
+
+    def disable_left_rotation(self):
+        """Keep VTK picking events, but never start its left-button camera drag."""
+        style = self.plotter.iren.interactor.GetInteractorStyle()
+        if style is None or style is self.camera_style: return
+        self.camera_style = style
+        # PyVista's capture style installs a press observer which explicitly
+        # calls OnLeftButtonDown. Replace that *style* binding, not the
+        # interactor observers used by point/surface picking and annotations.
+        style.RemoveObservers('LeftButtonPressEvent')
+        style.AddObserver('LeftButtonPressEvent', lambda *_: None)
+        if style.GetState(): style.StopState()
 
     def circle_geometry(self):
         return QPointF(self.plotter.width() / 2, self.plotter.height() / 2), min(self.plotter.width(), self.plotter.height()) / 3
@@ -119,6 +133,8 @@ class SceneNavigation(QObject):
     def eventFilter(self, obj, event):
         if obj is not self.plotter: return False
         kind = event.type()
+        if kind in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            self.disable_left_rotation()
         if kind in (QEvent.Hide, QEvent.WindowDeactivate, QEvent.FocusOut):
             self.cancel()
         if kind == QEvent.KeyPress and event.key() == Qt.Key_Escape and self.start is not None:

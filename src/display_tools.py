@@ -113,6 +113,7 @@ class DisplayTools(QObject):
         self._report_dialog = None
         self._density, self._price = 1., 0.
         self._cube_state = None
+        self._grid_plate = None
         self._font_file = scene_font()
         self.buttons = window.ui.display_buttons
         menu = QMenu(self.buttons['view'])
@@ -132,6 +133,7 @@ class DisplayTools(QObject):
 
     def attach(self, plotter):
         if plotter is self.plotter: return
+        self._clear_grid_plate_bias()
         self.plotter = plotter
         self.overlays.clear(); self.owners.clear(); self.datasets.clear(); self._base_styles.clear()
         self._signature, self._cube_state = None, None
@@ -315,12 +317,15 @@ class DisplayTools(QObject):
             signature = (tuple((row, id(parts[row]['mesh']), id(parts[row]['mesh_pv']), parts[row].get('filename'),
                                 parts[row].get('source_path'), parts[row].get('path'),
                                 tuple((group['id'], id(group['vertices']), id(group['faces'])) for group in parts[row].get('supports', []))) for row in rows),
-                         tuple(sorted((key, value) for key, value in self.state.items() if key not in STATISTICS)), json.dumps(platform, sort_keys=True, default=str))
+                         tuple(sorted((key, value) for key, value in self.state.items() if key not in STATISTICS)),
+                         json.dumps(platform, sort_keys=True, default=str), id(plotter.actors.get('plat_base')))
             missing = any(name not in self.plotter.actors for name in self.overlays)
             if signature != self._signature or missing:
                 self.clear_overlays(); self._build_overlays(rows, platform)
                 self._signature = signature; self.rebuild_count += 1
             self._sync_overlays()
+            if hasattr(self.window, 'analysis_tools'): self.window.analysis_tools.sync_highlights()
+            if hasattr(self.window, 'marking_previews'): self.window.marking_previews.sync()
         finally:
             self._updating = False
         self.plotter.render()
@@ -328,7 +333,14 @@ class DisplayTools(QObject):
         workspace = getattr(self.window, 'workspace_tools', None)
         if hasattr(workspace, 'refresh_part_selection'): workspace.refresh_part_selection()
 
+    def _clear_grid_plate_bias(self):
+        plate = self._grid_plate
+        if plate is not None:
+            plate.GetShaderProperty().ClearFragmentShaderReplacement('//VTK::Depth::Impl', True)
+            self._grid_plate = None
+
     def clear_overlays(self):
+        self._clear_grid_plate_bias()
         for name in self.overlays:
             self.plotter.remove_actor(name, render=False)
         self.overlays.clear(); self.owners.clear()
@@ -383,28 +395,59 @@ class DisplayTools(QObject):
         base = 10 ** math.floor(math.log10(raw))
         return next(value * base for value in (1, 2, 5, 10) if value * base >= raw)
 
+    def _build_metric_grid(self, bounds):
+        """World-millimetre lines anchored at XY=0, clipped to the plate edges."""
+        plate = self.plotter.actors.get('plat_base')
+        if plate is not None:
+            # Resolve MSAA depth conflicts on the receiving surface. Derivatives
+            # of a line cannot describe the plate slope perpendicular to that line.
+            # Bias this visual plate by about one pixel's depth, keeping ordinary
+            # depth testing and the real part meshes untouched. A world-space lift
+            # alone fails at a grazing angle. Avoid vtkMapper's GLOBAL offset mode.
+            plate.GetShaderProperty().AddFragmentShaderReplacement(
+                '//VTK::Depth::Impl', True,
+                'float gridPlateSlope = abs(dFdx(gl_FragCoord.z)) + abs(dFdy(gl_FragCoord.z));\n'
+                'gl_FragDepth = min(1.0, gl_FragCoord.z + gridPlateSlope + 1.0 / 65000.0);\n',
+                False)
+            self._grid_plate = plate
+        intervals = [(math.ceil(bounds[0, axis]), math.floor(bounds[1, axis])) for axis in (0, 1)]
+        # Keep a malformed/very large import from allocating an unbounded grid.
+        if sum(max(0, hi-lo+1) for lo, hi in intervals) > 200_000:
+            raise ValueError('Габариты слишком велики для сетки 1 мм. Выберите платформу или проверьте единицы модели.')
+        ticks = [np.arange(lo, hi+1, dtype=np.int64) for lo, hi in intervals]
+        for name, major, opacity, width in (('grid_minor', False, .20, 1.), ('grid_major', True, .60, 1.5)):
+            segments = []
+            for axis, values in enumerate(ticks):
+                values = values[(values % 10 == 0) == major]
+                lines = np.zeros((len(values), 2, 3), dtype=float)
+                lines[:, :, axis] = values[:, None]
+                lines[:, 0, 1-axis] = bounds[0, 1-axis]
+                lines[:, 1, 1-axis] = bounds[1, 1-axis]
+                lines[:, :, 2] = .02  # Nominal clearance; the plate bias handles MSAA.
+                segments.append(lines)
+            points = np.concatenate(segments).reshape(-1, 3)
+            if len(points):
+                self._mesh_actor(name, pv.line_segments_from_points(points), color='#64727c',
+                                 opacity=opacity, line_width=width, lighting=False)
+        self._label('grid_step', 'Сетка: 1 мм · основные линии: 10 мм', [bounds[0, 0], bounds[1, 1], .02])
+
     def _build_overlays(self, rows, platform):
         bounds = self._scene_bounds(rows, platform)
-        if self.state['grid'] or self.state['ruler']:
+        if self.state['grid']: self._build_metric_grid(bounds)
+        if self.state['ruler']:
             step = self._nice_step(max(bounds[1, :2] - bounds[0, :2]))
             xs = np.arange(math.ceil(bounds[0, 0] / step), math.floor(bounds[1, 0] / step) + 1) * step
             ys = np.arange(math.ceil(bounds[0, 1] / step), math.floor(bounds[1, 1] / step) + 1) * step
-            if self.state['grid']:
-                segments = [[[x, bounds[0, 1], .02], [x, bounds[1, 1], .02]] for x in xs]
-                segments += [[[bounds[0, 0], y, .02], [bounds[1, 0], y, .02]] for y in ys]
-                if segments: self._mesh_actor('grid', pv.line_segments_from_points(np.reshape(segments, (-1, 3))), color='#7996a2', opacity=.55, line_width=1)
-                self._label('grid_step', f'Сетка: {step:g} мм', [bounds[0, 0], bounds[1, 1], .02])
-            if self.state['ruler']:
-                points = [[bounds[0, 0], bounds[0, 1], .04], [bounds[1, 0], bounds[0, 1], .04],
-                          [bounds[0, 0], bounds[0, 1], .04], [bounds[0, 0], bounds[1, 1], .04]]
-                tick = step * .08
-                for i, x in enumerate(xs):
-                    points += [[x, bounds[0, 1] - tick, .04], [x, bounds[0, 1] + tick, .04]]
-                    self._label(f'ruler_x_{i}', f'X {x:g}', [x, bounds[0, 1] - tick * 2, .04], size=9)
-                for i, y in enumerate(ys):
-                    points += [[bounds[0, 0] - tick, y, .04], [bounds[0, 0] + tick, y, .04]]
-                    self._label(f'ruler_y_{i}', f'Y {y:g}', [bounds[0, 0] - tick * 2, y, .04], size=9)
-                self._mesh_actor('rulers', pv.line_segments_from_points(points), color='#345367', line_width=2)
+            points = [[bounds[0, 0], bounds[0, 1], .04], [bounds[1, 0], bounds[0, 1], .04],
+                      [bounds[0, 0], bounds[0, 1], .04], [bounds[0, 0], bounds[1, 1], .04]]
+            tick = step * .08
+            for i, x in enumerate(xs):
+                points += [[x, bounds[0, 1] - tick, .04], [x, bounds[0, 1] + tick, .04]]
+                self._label(f'ruler_x_{i}', f'X {x:g}', [x, bounds[0, 1] - tick * 2, .04], size=9)
+            for i, y in enumerate(ys):
+                points += [[bounds[0, 0] - tick, y, .04], [bounds[0, 0] + tick, y, .04]]
+                self._label(f'ruler_y_{i}', f'Y {y:g}', [bounds[0, 0] - tick * 2, y, .04], size=9)
+            self._mesh_actor('rulers', pv.line_segments_from_points(points), color='#345367', line_width=2)
         if self.state['origin']:
             length = max(float(np.max(bounds[1] - bounds[0])) * .15, .01)
             for axis, color in enumerate(('#e35b54', '#78b83e', '#458ed6')):

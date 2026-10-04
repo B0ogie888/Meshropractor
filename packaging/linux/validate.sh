@@ -19,7 +19,7 @@ runuser -u mesh-test -- xvfb-run -a -s '-screen 0 1600x1000x24' \
     meshropractor & pid=$!
     trap "kill $pid 2>/dev/null || true" EXIT
     for attempt in $(seq 1 30); do
-        if xdotool search --onlyvisible --name "Meshropractor -" >/dev/null; then
+        if xdotool search --onlyvisible --name "^Meshropractor (—|-)" >/dev/null; then
             test -s "$HOME/.local/state/Meshropractor/logs/Meshropractor.log"
             echo DESKTOP_STARTUP_OK
             exit 0

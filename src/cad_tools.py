@@ -46,7 +46,8 @@ class CADTools(QObject):
         self.window = window
         self.dialog = None
         self.last_surface = None
-        window.ui.ribbon_btns['CAD / STEP'].clicked.connect(self.open)
+        ribbon_button = window.ui.ribbon_btns.get('CAD / STEP')
+        if ribbon_button is not None: ribbon_button.clicked.connect(self.open)
         window.ui.btn_cad_tools.clicked.connect(self.open)
         window.ui.stack.currentChanged.connect(self.refresh)
 

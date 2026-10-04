@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 """CAD import, support ownership, placement and undo through the desktop controller."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -21,7 +22,7 @@ from OCP.BRep import BRep_Builder
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
 from OCP.TopoDS import TopoDS_Compound
 from OCP.gp import gp_Pnt
-from Meshropractor import MainWindow
+from main_window import MainWindow
 from cad_import import load_step
 from cad_state import cad_status, require_native, cad_face_triangles
 from cad_tools import prepare_cad_changes
@@ -60,7 +61,7 @@ class CADToolsTests(unittest.TestCase):
         if self.window._job is not None:
             self.window.cancel_current_job(); self.wait_job()
         if self.window.cad_tools.dialog is not None: self.window.cad_tools.dialog.close()
-        self.window.dirty = False; self.window.close(); self.window.deleteLater(); APP.processEvents()
+        self.window.dirty = False; self.window.close(); delete_widget(self.window); APP.processEvents()
 
     def wait_job(self):
         deadline = time.monotonic() + 45
@@ -144,7 +145,7 @@ class CADToolsTests(unittest.TestCase):
     def test_selected_step_export_and_modified_mesh_refusal(self):
         source = self.load()
         path = Path(self.folder.name) / 'выбранные.step'
-        with patch('Meshropractor.QFileDialog.getSaveFileName', return_value=(str(path), 'STEP — CAD-тела (*.step *.stp)')):
+        with patch('main_window.QFileDialog.getSaveFileName', return_value=(str(path), 'STEP — CAD-тела (*.step *.stp)')):
             self.window.save_selected_slicer_parts(); self.wait_job()
         self.assertTrue(path.exists(), self.messages)
         np.testing.assert_allclose(load_step(path).bounds, source.bounds, atol=1e-6)

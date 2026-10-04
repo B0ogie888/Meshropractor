@@ -155,6 +155,59 @@ class DisplayToolsTests(unittest.TestCase):
         self.assertIs(part['mesh'], source)
         np.testing.assert_array_equal(source.faces, faces); np.testing.assert_array_equal(source.vertices, vertices)
 
+    def test_platform_grid_has_exact_millimetres_from_origin_and_clips_partial_edge_cells(self):
+        window = self.window()
+        window.platforms[0]['dim'] = [220, 220, 280]
+        window.ui.scene_tabs.setCurrentIndex(1)
+        self.toggle(window, 'grid')
+        def segments(name):
+            data = window.tools.overlays[PREFIX + name].mapper.dataset
+            return data.points[data.lines.reshape(-1, 3)[:, 1:]]
+        major, minor = segments('grid_major'), segments('grid_minor')
+        self.assertEqual(len(major), 46)  # 23 lines per direction, -110 ... 0 ... +110.
+        self.assertEqual(len(minor), 396)
+        for axis in (0, 1):
+            main_lines = major[major[:, 0, axis] == major[:, 1, axis], 0, axis]
+            fine_lines = minor[minor[:, 0, axis] == minor[:, 1, axis], 0, axis]
+            np.testing.assert_array_equal(main_lines, np.arange(-110, 111, 10))
+            np.testing.assert_array_equal(np.sort(np.r_[main_lines, fine_lines]), np.arange(-110, 111))
+            self.assertEqual(np.count_nonzero(main_lines > 0), 11)
+            self.assertEqual(np.count_nonzero(main_lines < 0), 11)
+        self.assertLess(window.tools.overlays[PREFIX+'grid_minor'].prop.opacity,
+                        window.tools.overlays[PREFIX+'grid_major'].prop.opacity)
+        window.platforms[1]['dim'] = [225, 143, 80]
+        window.ui.scene_tabs.setCurrentIndex(2); window.tools.on_scene_changed()
+        for name in ('grid_minor', 'grid_major'):
+            lines = segments(name)
+            np.testing.assert_allclose(lines.min(axis=(0, 1))[:2], [-112.5, -71.5])
+            np.testing.assert_allclose(lines.max(axis=(0, 1))[:2], [112.5, 71.5])
+            for axis in (0, 1):
+                values = lines[lines[:, 0, axis] == lines[:, 1, axis], 0, axis]
+                np.testing.assert_array_equal(values % 1, 0)
+                if name == 'grid_major': np.testing.assert_array_equal(values % 10, 0)
+        self.toggle(window, 'grid', False)
+        self.assertFalse(any(name.startswith(PREFIX+'grid') for name in window.tools.overlays))
+
+    def test_grid_depth_bias_tracks_plate_replacement_and_is_removed_on_toggle_off(self):
+        from vtkmodules.vtkRenderingCore import vtkMapper
+        window = self.window()
+        plotter = window.ui.slicer_plotter
+        global_mode = vtkMapper.GetResolveCoincidentTopology()
+        plate = plotter.add_mesh(pv.Plane(), name='plat_base')
+        self.toggle(window, 'grid')
+        self.assertEqual(plate.GetShaderProperty().GetNumberOfShaderReplacements(), 1)
+        cached = window.tools.overlays[PREFIX+'grid_major']
+        window.tools.on_scene_changed()
+        self.assertIs(window.tools.overlays[PREFIX+'grid_major'], cached)
+        # Redrawing a platform with the same dimensions creates a different actor.
+        replacement = plotter.add_mesh(pv.Plane(), name='plat_base')
+        window.tools.on_scene_changed()
+        self.assertEqual(plate.GetShaderProperty().GetNumberOfShaderReplacements(), 0)
+        self.assertEqual(replacement.GetShaderProperty().GetNumberOfShaderReplacements(), 1)
+        self.toggle(window, 'grid', False)
+        self.assertEqual(replacement.GetShaderProperty().GetNumberOfShaderReplacements(), 0)
+        self.assertEqual(vtkMapper.GetResolveCoincidentTopology(), global_mode)
+
     def test_simplified_view_restores_visibility_supports_and_respects_platform_filter(self):
         window = self.window([trimesh.creation.box(), trimesh.creation.box()])
         plotter = window.ui.slicer_plotter

@@ -1,3 +1,4 @@
+from qt_test_cleanup import delete_widget
 """Camera pivots follow viewport double-clicks and never table selection."""
 from pathlib import Path
 import sys
@@ -13,7 +14,7 @@ from PySide6.QtGui import QMouseEvent
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from test_desktop import APP
 from test_repair_tools import RepairPlotter
-from Meshropractor import MainWindow
+from main_window import MainWindow
 from project_store import ProjectState
 
 
@@ -57,7 +58,7 @@ class RotationCenterTests(unittest.TestCase):
         self.addCleanup(self.cleanup)
 
     def cleanup(self):
-        self.window.dirty = False; self.window.close(); self.window.deleteLater(); APP.processEvents()
+        self.window.dirty = False; self.window.close(); delete_widget(self.window); APP.processEvents()
 
     def event(self, kind=QEvent.MouseButtonDblClick, modifiers=Qt.NoModifier):
         return QMouseEvent(kind, QPointF(100, 100), QPointF(100, 100),

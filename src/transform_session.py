@@ -2,9 +2,10 @@
 import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QTimer
 from transform_dialog import TransformDialog
 from transform_math import unit, selection_bounds
+from transform_gizmo import TransformGizmo
 
 
 class TransformSession:
@@ -21,13 +22,11 @@ class TransformSession:
         self.dialog.pick_requested.connect(self.start_pick)
         self.dialog.finished.connect(self.close)
         self.gizmo = None
-        self.proxy = None
         self.ghosts = []
         self.plane_actor = None
         self.picking = None
         self.pickability = {}
         self.closed = False
-        self.gizmo_pending = False
         controls = [window.ui.magics_ribbon, window.ui.toolbar, window.ui.tbl_parts, window.ui.scene_tabs,
                     window.ui.section_panel, window.ui.action_save, window.ui.action_undo, window.ui.action_redo,
                     window.ui.btn_back_to_start]
@@ -38,6 +37,7 @@ class TransformSession:
         for control, _ in self.controls: control.setEnabled(False)
         window.ui.section_panel._make_widget()
         window._transform_session = self
+        if hasattr(window.ui, 'part_inspector'): window.ui.part_inspector.schedule_refresh()
         self.dialog.show()
         # Keep the model visible beside the panel.
         pos = window.mapToGlobal(window.rect().topLeft())
@@ -88,47 +88,27 @@ class TransformSession:
         if self.gizmo is not None:
             self.gizmo.remove()
             self.gizmo = None
-        if self.proxy is not None:
-            self.plotter.remove_actor(self.proxy)
-            self.proxy = None
         if self.plane_actor is not None:
             self.plotter.remove_actor(self.plane_actor)
             self.plane_actor = None
 
     def update_handles(self, params, matrices):
-        if self.operation in ('Перемещать', 'Вращать') and hasattr(self.plotter, 'add_affine_transform_widget'):
+        if self.operation in ('Перемещать', 'Вращать') and isinstance(self.plotter, QObject):
             bounds = selection_bounds([self.window.slicer_parts[r]['mesh'] for r in self.rows])
             center = self.dialog.move_anchor() if self.operation == 'Перемещать' else (
                 np.asarray(params['line_a']) if params['along_line'] else bounds.mean(axis=0) if params['individual'] else params['center'])
             if self.gizmo is None:
-                spans = np.maximum(bounds[1] - bounds[0], .01)
-                self.proxy = self.plotter.add_mesh(pv.Cube(center=bounds.mean(axis=0), x_length=spans[0], y_length=spans[1], z_length=spans[2]), opacity=0, name='transform_handle_proxy')
-                self.proxy.pickable = False
-                self.gizmo = self.plotter.add_affine_transform_widget(self.proxy, origin=tuple(center), scale=.65,
-                    axes_colors=('#ef5350', '#72c64b', '#448aff'), interact_callback=self.queue_gizmo,
-                    release_callback=self.gizmo_released)
-                # PyVista 0.47 pins these actor lists; hide the irrelevant half of its affine handle.
-                for actor in self.gizmo._circles if self.operation == 'Перемещать' else self.gizmo._arrows:
-                    actor.visibility = False
-                    actor.pickable = False
+                self.gizmo = TransformGizmo(self.plotter, self.operation, self.gizmo_changed, self.gizmo_released)
             matrix = next(iter(matrices.values()))
-            if not self.gizmo._pressing_down:
-                axes = np.eye(3)
-                if params['along_line']:
-                    direction = unit(np.asarray(params['line_b']) - params['line_a'])
-                    reference = [0, 0, 1] if abs(direction[2]) < .9 else [0, 1, 0]
-                    first = unit(np.cross(reference, direction))
-                    axes = np.array([first, np.cross(direction, first), direction])
-                self.gizmo.axes = axes
-                for index in range(3):
-                    enabled = not params['along_line'] or index == 2
-                    for actor, allowed in ((self.gizmo._arrows[index], self.operation == 'Перемещать'),
-                                           (self.gizmo._circles[index], self.operation == 'Вращать')):
-                        actor.visibility = enabled and allowed
-                        actor.pickable = enabled and allowed
-                self.gizmo.origin = center + matrix[:3, 3] if self.operation == 'Перемещать' else center
-                self.gizmo._cached_matrix = matrix.copy()
-            self.proxy.user_matrix = matrix
+            axes = np.eye(3)
+            if params['along_line']:
+                direction = unit(np.asarray(params['line_b']) - params['line_a'])
+                reference = [0, 0, 1] if abs(direction[2]) < .9 else [0, 1, 0]
+                first = unit(np.cross(reference, direction))
+                axes = np.array([first, np.cross(direction, first), direction])
+            self.gizmo.configure(center + matrix[:3, 3] if self.operation == 'Перемещать' else center,
+                axes, matrix, max(np.linalg.norm(bounds[1] - bounds[0]), .1),
+                along_line=params['along_line'], snap=self.dialog.snap_step.value() if self.dialog.snap.isChecked() else None)
         elif self.operation == 'Отзеркалить':
             if self.plane_actor is not None: self.plotter.remove_actor(self.plane_actor)
             length = max(np.linalg.norm(self.dialog.bounds[1] - self.dialog.bounds[0]), .1)
@@ -136,17 +116,6 @@ class TransformSession:
             self.plane_actor = self.plotter.add_mesh(pv.Plane(center=origin, direction=unit(params['normal']),
                 i_size=length, j_size=length), color='#78bff0', opacity=.18, name='transform_mirror_plane')
             self.plane_actor.pickable = False
-
-    def queue_gizmo(self, matrix):
-        # PyVista calls its interaction callback before assigning the new matrix.
-        if not self.gizmo_pending:
-            self.gizmo_pending = True
-            QTimer.singleShot(0, self.read_gizmo)
-
-    def read_gizmo(self):
-        self.gizmo_pending = False
-        if not self.closed and not self.picking and self.proxy is not None:
-            self.gizmo_changed(self.proxy.user_matrix)
 
     def gizmo_changed(self, matrix):
         if self.closed: return
@@ -157,9 +126,7 @@ class TransformSession:
             if dialog.along_line.isChecked():
                 direction = unit(dialog.numbers(dialog.line_b) - dialog.numbers(dialog.line_a))
                 distance = float(values @ direction)
-                if dialog.snap.isChecked(): distance = round(distance / dialog.snap_step.value()) * dialog.snap_step.value()
                 values = direction * distance
-            elif dialog.snap.isChecked(): values = np.round(values / dialog.snap_step.value()) * dialog.snap_step.value()
             dialog.set_values(dialog.values, values)
             dialog.sync_move(False)
         elif self.operation == 'Вращать':
@@ -167,23 +134,14 @@ class TransformSession:
             if dialog.along_line.isChecked():
                 direction = unit(dialog.numbers(dialog.line_b) - dialog.numbers(dialog.line_a))
                 angle = np.rad2deg(rotation.as_rotvec() @ direction)
-                if dialog.snap.isChecked(): angle = round(angle / dialog.snap_step.value()) * dialog.snap_step.value()
                 dialog.set_values([dialog.line_angle], [angle])
             else:
                 angles = rotation.as_euler('xyz', degrees=True)
-                if dialog.snap.isChecked(): angles = np.round(angles / dialog.snap_step.value()) * dialog.snap_step.value()
                 dialog.set_values(dialog.values, angles)
         self.update_preview()
 
-    def gizmo_released(self, matrix):
-        self.gizmo_changed(matrix)
-        # Recreate between drags so the affine widget's cached matrix matches snapped fields.
-        QTimer.singleShot(0, self.rebuild_handles)
-
-    def rebuild_handles(self):
-        if not self.closed and not self.picking:
-            self.clear_handles()
-            self.update_preview()
+    def gizmo_released(self):
+        if not self.closed and not self.picking: self.update_preview()
 
     def start_pick(self, purpose, count):
         self.timer.stop()
@@ -253,6 +211,7 @@ class TransformSession:
         self.clear_handles()
         self.clear_preview()
         self.window._transform_session = None
+        if hasattr(self.window.ui, 'part_inspector'): self.window.ui.part_inspector.schedule_refresh()
         for control, enabled in self.controls: control.setEnabled(enabled)
         self.window.ui.section_panel._make_widget()
         self.window.update_history_actions()

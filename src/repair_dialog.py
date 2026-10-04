@@ -68,11 +68,11 @@ class RepairDialog(QDialog):
     selection_requested = Signal()
     selection_changed = Signal()
 
-    def __init__(self, operation, count, center, parent):
+    def __init__(self, operation, count, center, parent, *, caption=None):
         super().__init__(parent)
         self.operation = operation
         self.running = False
-        self.setWindowTitle(REPAIR_COMMANDS[operation])
+        self.setWindowTitle(caption or REPAIR_COMMANDS[operation])
         self.setStyleSheet(DIALOG_STYLE + '''
             QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit {
                 background: #262626; color: #e0e0e0; border: 1px solid #666; padding: 4px;
@@ -140,7 +140,7 @@ class RepairDialog(QDialog):
         layout.addWidget(self.preview)
         support_note = QLabel('После изменения сетки проверьте поддержки. Их геометрия сохраняется; '
                              'привязки к граням сохраняются или перенумеровываются, где это возможно, иначе сбрасываются.')
-        support_note.setWordWrap(True); layout.addWidget(support_note)
+        support_note.setWordWrap(True); layout.addWidget(support_note); self.support_note = support_note
         self.status = QLabel('Alt + мышь — навигация. Исходная геометрия сохраняется до применения.')
         self.status.setWordWrap(True); layout.addWidget(self.status)
         self.report = QPlainTextEdit(); self.report.setReadOnly(True); self.report.setMaximumHeight(170)

@@ -125,7 +125,7 @@ class RepairTools(QObject):
 
 
 class RepairSession(QObject):
-    def __init__(self, window, operation, rows):
+    def __init__(self, window, operation, rows, *, dialog_factory=None, calculator=None):
         super().__init__(window)
         self.window, self.operation, self.rows = window, operation, list(rows)
         self.plotter = window.ui.slicer_plotter
@@ -133,7 +133,8 @@ class RepairSession(QObject):
                              supports=window.slicer_parts[row].get('supports', [])) for row in rows]
         self.selection = {row: sorted(window.workspace_tools.selection.get(row, ())) for row in rows}
         center = np.mean([record['mesh'].bounds.mean(axis=0) for record in self.records], axis=0)
-        self.dialog = RepairDialog(operation, len(rows), center, window)
+        self.calculator = calculator or calculate_repairs
+        self.dialog = (dialog_factory or RepairDialog)(operation, len(rows), center, window)
         self.result = None
         self.closed = False
         self.preview_actors = []
@@ -151,6 +152,7 @@ class RepairSession(QObject):
         window.workspace_tools.measurements.stop()
         window.workspace_tools.manual = None
         window._repair_session = self
+        if hasattr(window.ui, 'part_inspector'): window.ui.part_inspector.schedule_refresh()
         window.ui.section_panel._make_widget()
         window.flush_history()
         if operation == 'delete_faces': self.dialog.set_selected_ids(self.selection[rows[0]])
@@ -199,7 +201,7 @@ class RepairSession(QObject):
             self.set_picking(False)
             self.invalidate()
             self.clear_markers()
-            worker = FunctionWorker(calculate_repairs, self.records, self.operation, parameters, selection, vertices, with_progress=True)
+            worker = FunctionWorker(self.calculator, self.records, self.operation, parameters, selection, vertices, with_progress=True)
             worker.progress.connect(self.dialog.status.setText)
             worker.error.connect(self.dialog.report.setPlainText)
             worker.finished.connect(lambda: QTimer.singleShot(0, self.finished_calculation))
@@ -236,7 +238,7 @@ class RepairSession(QObject):
             if report.get('changed', True) and self.operation not in ('slivers', 'overlaps'):
                 from cad_state import cad_status
                 source = self.window.slicer_parts[item['row']]['mesh']
-                if cad_status(source) == 'native' and any(cad_status(mesh) != 'native' for mesh in item['meshes']):
+                if result.get('mode') != 'add' and cad_status(source) == 'native' and any(cad_status(mesh) != 'native' for mesh in item['meshes']):
                     lines.append('Результат редактируется как сетка: BREP больше не соответствует изменённой геометрии. '
                                  'Экспорт STEP станет недоступен; Ctrl+Z восстановит CAD.')
             if not report.get('acceptable', True): lines.append('Допуск формы превышен: применение заблокировано.')
@@ -368,7 +370,7 @@ class RepairSession(QObject):
         self.plotter.setCursor(Qt.CrossCursor if enabled else Qt.ArrowCursor) if hasattr(self.plotter, 'setCursor') else None
         if enabled:
             self.invalidate()
-            self.dialog.status.setText('Левая кнопка — выбор; Alt + мышь — вращение; Esc — завершить выбор.')
+            self.dialog.status.setText('Левая кнопка — выбор; ПКМ — вращение; Esc — завершить выбор.')
 
     def clear_markers(self):
         if self.marker is not None: self.plotter.remove_actor(self.marker); self.marker = None
@@ -459,6 +461,7 @@ class RepairSession(QObject):
         if hasattr(self.plotter, 'removeEventFilter'): self.plotter.removeEventFilter(self)
         if hasattr(self.plotter, 'setCursor'): self.plotter.setCursor(Qt.ArrowCursor)
         self.window._repair_session = None
+        if hasattr(self.window.ui, 'part_inspector'): self.window.ui.part_inspector.schedule_refresh()
         for control, enabled in self.controls: control.setEnabled(enabled)
         self.window.ui.section_panel._make_widget()
         self.window.update_history_actions()

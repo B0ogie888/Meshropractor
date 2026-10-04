@@ -1,11 +1,8 @@
 """Slicer primitives, copies and reversible world-coordinate transforms."""
-from itertools import product
 from pathlib import Path
 import numpy as np
-import trimesh
 from scipy.spatial.transform import Rotation
-from PySide6.QtWidgets import (QDialog, QFormLayout, QDoubleSpinBox, QSpinBox, QComboBox,
-    QCheckBox, QLabel, QDialogButtonBox, QWidget, QHBoxLayout)
+from PySide6.QtWidgets import QCheckBox
 
 
 TOOL_NAMES = ("Создать", "Дублировать", "Пакетное дублирование", "Перемещать", "Вращать", "Масштабировать", "Отзеркалить")
@@ -34,83 +31,17 @@ def transform_matrix(operation, values, center):
     return matrix
 
 
-def create_primitive(kind, dimensions, center):
+def create_primitive(kind, dimensions, center, mesh_settings=None):
+    from primitive_geometry import build_primitive
+    if isinstance(dimensions,dict): return build_primitive(kind,dimensions,center,mesh_settings)
     dimensions = np.asarray(dimensions, dtype=float)
-    if not np.isfinite(dimensions).all() or np.any(dimensions <= 0):
+    if dimensions.shape!=(3,) or not np.isfinite(dimensions).all() or np.any(dimensions <= 0):
         raise ValueError("Размеры должны быть больше нуля.")
-    if kind == "Параллелепипед": mesh = trimesh.creation.box(extents=dimensions)
-    elif kind == "Цилиндр": mesh = trimesh.creation.cylinder(radius=dimensions[0] / 2, height=dimensions[2], sections=96)
-    elif kind == "Сфера": mesh = trimesh.creation.icosphere(radius=dimensions[0] / 2, subdivisions=3)
+    if kind=='Параллелепипед': values = dict(x=dimensions[0],y=dimensions[1],h=dimensions[2])
+    elif kind=='Цилиндр': values = dict(r=dimensions[0]/2,h=dimensions[2])
+    elif kind=='Сфера': values = dict(r=dimensions[0]/2)
     else: raise ValueError("Неизвестный примитив.")
-    mesh.apply_translation(center)
-    return mesh
-
-
-class ToolDialog(QDialog):
-    def __init__(self, operation, parent=None):
-        super().__init__(parent)
-        self.operation = operation
-        self.setWindowTitle(operation)
-        self.form = QFormLayout(self)
-        self.setMinimumWidth(430)
-        self.kind = QComboBox()
-        self.kind.addItems(["Параллелепипед", "Цилиндр", "Сфера"])
-        self.values = []
-        self.origin = []
-        self.counts = []
-        if operation == "Создать":
-            self.form.addRow("Форма:", self.kind)
-            self.values = self.vector("Размер X/Y/Z, мм", [10, 10, 10], minimum=.001)
-            self.origin = self.vector("Центр X/Y/Z, мм", [0, 0, 5])
-            self.kind.currentIndexChanged.connect(self._shape_changed)
-            self._shape_changed()
-        elif operation in ("Дублировать", "Пакетное дублирование"):
-            for axis in ("Копий",) if operation == "Дублировать" else ("Количество X", "Количество Y", "Количество Z"):
-                spin = QSpinBox()
-                spin.setRange(1, 1000)
-                spin.setValue(1 if axis != "Количество X" else 2)
-                self.counts.append(spin)
-                self.form.addRow(axis + ":", spin)
-            self.values = self.vector("Шаг X/Y/Z, мм", [20, 0, 0] if operation == "Дублировать" else [20, 20, 20])
-            hint = QLabel("Шаг — смещение между копиями. В массиве количество включает исходную деталь; исходная ячейка не дублируется.")
-            hint.setWordWrap(True)
-            self.form.addRow(hint)
-        else:
-            raise ValueError("Для преобразований используется TransformDialog.")
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.buttons.button(QDialogButtonBox.Ok).setText("Применить")
-        self.buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
-        self.form.addRow(self.buttons)
-
-    def vector(self, label, values, minimum=-1e6):
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        result = []
-        for axis, value in zip("XYZ", values):
-            spin = QDoubleSpinBox()
-            spin.setDecimals(4)
-            spin.setRange(minimum, 1e6)
-            spin.setValue(value)
-            spin.setKeyboardTracking(False)
-            spin.setPrefix(axis + ": ")
-            layout.addWidget(spin)
-            result.append(spin)
-        self.form.addRow(label + ":", container)
-        return result
-
-    def _shape_changed(self):
-        kind = self.kind.currentIndex()
-        self.values[0].setPrefix("X: " if kind == 0 else "Ø: ")
-        self.values[1].setEnabled(kind == 0)
-        self.values[2].setEnabled(kind != 2)
-
-    def parameters(self):
-        return dict(values=[spin.value() for spin in self.values],
-                    center=[spin.value() for spin in self.origin], kind=self.kind.currentText(),
-                    counts=[spin.value() for spin in self.counts])
+    return build_primitive(kind,values,center,mesh_settings or dict(mode='segments',segments=96))
 
 
 class SlicerToolsMixin:
@@ -164,7 +95,12 @@ class SlicerToolsMixin:
             from transform_session import TransformSession
             TransformSession(self, operation, rows)
             return
-        dialog = ToolDialog(operation, self)
+        if operation in TOOL_NAMES[1:3]:
+            from duplicate_session import DuplicateSession
+            DuplicateSession(self,operation,rows)
+            return
+        from primitive_dialog import PrimitiveDialog
+        dialog = PrimitiveDialog(self)
         if dialog.exec():
             try: self.apply_slicer_tool(operation, dialog.parameters(), rows)
             except Exception as exc: self.log(f"Не удалось выполнить «{operation}»: {exc}")
@@ -191,19 +127,15 @@ class SlicerToolsMixin:
         before = self.capture_project()
         prepared = []
         if operation == "Создать":
-            mesh = create_primitive(params['kind'], params['values'], params['center'])
+            mesh = create_primitive(params['kind'], params.get('primitive',params.get('values')), params['center'],params.get('mesh_settings'))
             index = self.ui.scene_tabs.currentIndex()
             platforms = [p for p in self.platforms if p['is_default']]
             platform = platforms[index - 1]['name'] if 0 < index <= len(platforms) else None
             prepared.append((mesh, f"{params['kind']}.stl", platform, {}))
         elif operation in TOOL_NAMES[1:3]:
-            counts = params['counts']
-            if any(int(n) != n or n < 1 for n in counts): raise ValueError("Количество должно быть положительным целым.")
-            total = counts[0] if operation == "Дублировать" else int(np.prod(counts)) - 1
-            if total * len(rows) > 1000: raise ValueError("За один раз можно создать не более 1000 копий.")
-            estimate = sum(self.slicer_parts[r]['mesh'].vertices.nbytes + self.slicer_parts[r]['mesh'].faces.nbytes for r in rows) * total
-            if estimate > 512 * 1024**2: raise ValueError("Массив слишком велик (более 512 МБ геометрии). Уменьшите количество копий.")
-            offsets = [np.array(params['values']) * i for i in range(1, counts[0] + 1)] if operation == "Дублировать" else [np.array(params['values']) * cell for cell in product(*(range(n) for n in counts)) if any(cell)]
+            from duplicate_layout import duplicate_plan
+            from part_supports import combined_mesh
+            offsets = duplicate_plan([combined_mesh(self.slicer_parts[row]) for row in rows],params,operation)['offsets']
             for row in rows:
                 source = self.slicer_parts[row]
                 style = self._style_for(self.ui.tbl_parts, row)

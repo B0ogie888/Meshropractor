@@ -21,11 +21,11 @@ class TransformDialog(QDialog):
         self.initial_bounds = self.bounds.copy()
         self.initial_mesh_bounds = [m.bounds.copy() for m in meshes]
         self._sync = False
+        self._move_preferences_loading = True
         self.absolute = False
         self.setWindowTitle({'Перемещать': 'Перемещение деталей', 'Вращать': 'Вращать',
             'Масштабировать': 'Масштабировать детали', 'Отзеркалить': 'Отзеркалить детали'}[operation])
         self.setWindowModality(Qt.NonModal)
-        self.setStyleSheet('QRadioButton::indicator {width: 12px; height: 12px; border: 1px solid #999; border-radius: 7px; background: #252525;} QRadioButton::indicator:checked {border: 3px solid #62b4e8; background: #dceeff;}')
         self.setMinimumWidth(455 if operation != 'Масштабировать' else 560)
         root = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -101,7 +101,9 @@ class TransformDialog(QDialog):
             spin.blockSignals(False)
 
     def notify(self, *args):
-        if not self._sync: self.changed.emit()
+        if not self._sync:
+            if self.operation=='Перемещать': self.save_move_preferences()
+            self.changed.emit()
 
     def group(self, title):
         box = QGroupBox(title)
@@ -121,6 +123,9 @@ class TransformDialog(QDialog):
     def coordinates(self, layout, columns, labels):
         grid = QGridLayout()
         grid.setAlignment(Qt.AlignTop)
+        grid.setColumnMinimumWidth(0, 24)
+        grid.setColumnStretch(0, 0)
+        for col in range(len(columns)): grid.setColumnStretch(col + 1, 1)
         for col, label in enumerate(labels): grid.addWidget(QLabel(label), 0, col + 1)
         for axis in range(3):
             grid.addWidget(QLabel('XYZ'[axis]), axis + 1, 0)
@@ -181,7 +186,7 @@ class TransformDialog(QDialog):
         layout.addWidget(common)
         layout.addWidget(self.individual)
         self.anchor_groups = []
-        self.anchor_custom = self.spins(self.bounds.mean(axis=0))
+        self.anchor_custom = self.spins([0,0,0])
         grid = QGridLayout()
         for col, text in enumerate(['', 'Мин.', 'Центр', 'Макс.', 'Задать', 'Координата']): grid.addWidget(QLabel(text), 0, col)
         for axis in range(3):
@@ -193,8 +198,7 @@ class TransformDialog(QDialog):
                 grid.addWidget(button, axis + 1, mode + 1)
                 if mode == 1: button.setChecked(True)
             self.anchor_custom[axis].setEnabled(False)
-            group.idClicked.connect(lambda mode, a=axis: self.anchor_custom[a].setEnabled(mode == 3))
-            group.idClicked.connect(self.move_origin_changed)
+            group.idToggled.connect(lambda mode,checked,a=axis:self.anchor_mode_changed(a,mode) if checked else None)
             self.anchor_groups.append(group)
             grid.addWidget(self.anchor_custom[axis], axis + 1, 5)
         layout.addLayout(grid)
@@ -214,6 +218,46 @@ class TransformDialog(QDialog):
         self.individual.toggled.connect(self.move_origin_changed)
         self.along_line.toggled.connect(self.move_origin_changed)
         for spin in self.line_a + self.line_b: spin.valueChanged.connect(self.move_origin_changed)
+        self.restore_move_preferences()
+
+    def anchor_mode_changed(self,axis,mode):
+        self.anchor_custom[axis].setEnabled(mode==3)
+        if mode!=3: self.set_values([self.anchor_custom[axis]],[0])
+        self.move_origin_changed()
+
+    def restore_move_preferences(self):
+        settings=getattr(self.parent(),'settings',None); saved={}
+        try:
+            saved=json.loads(settings.value('move_preferences_v1','{}')) if settings is not None else {}
+            if not isinstance(saved,dict): saved={}
+        except (ValueError,TypeError): pass
+        modes=saved.get('anchor_modes',[1,1,1]); custom=saved.get('anchor_custom',[0,0,0])
+        for axis,group in enumerate(self.anchor_groups):
+            try: mode=int(modes[axis]); value=float(custom[axis])
+            except (ValueError,TypeError,IndexError,OverflowError): mode,value=1,0
+            if mode not in range(4): mode=1
+            if not np.isfinite(value): value=0
+            group.button(mode).setChecked(True)
+            self.set_values([self.anchor_custom[axis]],[value if mode==3 else 0])
+            self.anchor_custom[axis].setEnabled(mode==3)
+        self.individual.setChecked(bool(saved.get('individual',False)))
+        self.snap.setChecked(bool(saved.get('snap',True)))
+        try: step=float(saved.get('snap_step',5))
+        except (ValueError,TypeError,OverflowError): step=5
+        self.snap_step.setValue(step if np.isfinite(step) and step>0 else 5)
+        self.snap_step.setEnabled(self.snap.isChecked())
+        self._move_preferences_loading=False
+        self.sync_move(False)
+
+    def save_move_preferences(self):
+        if self._move_preferences_loading or not hasattr(self,'anchor_groups'): return
+        settings=getattr(self.parent(),'settings',None)
+        if settings is None: return
+        values=dict(anchor_modes=[g.checkedId() for g in self.anchor_groups],
+                    anchor_custom=self.numbers(self.anchor_custom).tolist(),
+                    individual=self.individual.isChecked(),snap=self.snap.isChecked(),snap_step=self.snap_step.value())
+        encoded=json.dumps(values)
+        if settings.value('move_preferences_v1')!=encoded: settings.setValue('move_preferences_v1',encoded)
 
     def move_anchor(self, bounds=None):
         if bounds is None: bounds = self.meshes[0].bounds if self.individual.isChecked() else self.bounds

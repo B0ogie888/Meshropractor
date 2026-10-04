@@ -1,5 +1,11 @@
 # Сборка Windows
 
+В 0.3 используется единый Meshropractor. Запуск без сборки: `Meshropractor.pyw`
+или `python src/Meshropractor.py`. Inno Setup создаёт один ярлык приложения.
+Заставка и основной интерфейс используют общий EXE с разными внутренними
+режимами запуска; дополнительные исполняемые файлы для заставки не нужны.
+Команды ниже собирают приложение и установщик версии из `VERSION`.
+
 Из корня проекта, в подготовленном Python 3.12 окружении:
 
 ```powershell
@@ -43,10 +49,10 @@ Poppler, не должны подменять системные библиот�
 & 'C:\Program Files\Inno Setup 7\ISCC.exe' Meshropractor.iss
 ```
 
-Результат: `dist\installer\Meshropractor-Setup-0.2.6-x64.exe`.
+Результат для текущей версии исходников: `dist\installer\Meshropractor-Setup-0.3-x64.exe`.
 Версия задаётся в корневом файле `VERSION`: его читают приложение и Inno Setup,
 а PyInstaller включает его в `_internal`. Для нового выпуска измените `VERSION`
-перед сборкой приложения и установщика. Параметр `/DMyAppVersion=0.2.6` сохраняется
+перед сборкой приложения и установщика. Параметр `/DMyAppVersion=0.3` сохраняется
 как переопределение версии установщика, но должен совпадать с версией уже собранного
 приложения. Inno проверяет `dist\Meshropractor\_internal\VERSION` и останавливается,
 если файл отсутствует или его версия отличается от версии установщика. После изменения
@@ -54,6 +60,10 @@ Poppler, не должны подменять системные библиот�
 Скрипт использует AppId существующей установки Meshropractor и копирует весь onedir,
 сохраняя структуру `_internal`. Папки проектов и пользовательские настройки не удаляются.
 Установщик не запускается автоматически после сборки.
+
+Оба ярлыка используют тот же `AppUserModelID`, что и процесс приложения:
+`b0ogie888.meshropractor`. Их иконка берётся из EXE, в который включён текущий
+`assets/logo.ico`. Параметр ярлыков описан в [Inno Setup](https://jrsoftware.org/ishelp/topic_iconssection.htm).
 
 Для публикации установщик использует `lzma2/ultra64` и сплошное сжатие, сохраняя
 все библиотеки CUDA, CAD и лечения. Это медленнее сборки с `lzma2/fast`, но уменьшает
@@ -72,8 +82,8 @@ $setup | Select-Object Name, Length
 размер; проверяйте фактический результат каждого выпуска.
 
 Чтобы приложение предложило обновление, создайте обычный (не draft/prerelease)
-GitHub Release в `B0ogie888/Meshropractor` с тегом вида `v0.2.6` и приложите
-`Meshropractor-Setup-0.2.6-x64.exe`. Номер в теге, имени установщика и `VERSION`
+GitHub Release в `B0ogie888/Meshropractor` с тегом вида `v0.3` и приложите
+`Meshropractor-Setup-0.3-x64.exe`. Номер в теге, имени установщика и `VERSION`
 должен совпадать. Публикуйте именно установщик, не отдельный EXE из onedir.
 При запуске приложение в фоне проверяет новые стабильные выпуски с Windows x64
 установщиком. Скачивание начинается после согласия, показывает прогресс и допускает
@@ -88,9 +98,9 @@ GitHub Release в `B0ogie888/Meshropractor` с тегом вида `v0.2.6` и �
 Проверки готовой папки:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/smoke_frozen.py
-.\.venv\Scripts\python.exe -I -S scripts/smoke_bundled_step.py
-.\.venv\Scripts\python.exe scripts/smoke_bundled_repair.py
+.\.venv\Scripts\python.exe scripts/validation/smoke_frozen.py
+.\.venv\Scripts\python.exe -I -S scripts/validation/smoke_bundled_step.py
+.\.venv\Scripts\python.exe scripts/validation/smoke_bundled_repair.py
 ```
 
 Первая проверка открывает и штатно закрывает EXE из посторонней рабочей папки.
